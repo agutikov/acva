@@ -1,9 +1,10 @@
 # M7 — Barge-In
 
 **Status: code-complete 2026-05-04** — Steps 1, 3, 4, 6, 7 landed; Step 2
-verified by unit tests (`tests/test_barge_in.cpp`); Step 5 (manual
-50-trial recorded validation) deferred to a separate dogfood pass when
-real mic + speakers are wired up. Bug TODOs 1, 2, 4 closed; Bug 3 left
+verified by unit tests (`tests/test_barge_in.cpp`); **Step 5 (recorded
+validation suite + 50-trial dogfood) carved off into M7B
+(`m7b_barge_in_validation.md`)** — automated synthetic-fixture
+suite, ~2.5 days estimated. Bug TODOs 1, 2, 4 closed; Bug 3 left
 open with a note (existing inline comment in
 `src/stt/realtime_stt_client.cpp` documents that the
 `prefix_padding_ms` field is required by Speaches' Pydantic validator

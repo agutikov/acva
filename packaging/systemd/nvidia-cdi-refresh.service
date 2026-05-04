@@ -1,0 +1,33 @@
+# Regenerate /etc/cdi/nvidia.yaml on every boot so Docker (CDI runtime)
+# sees the kernel's current dynamically-allocated character-device majors
+# for /dev/nvidia-uvm{,-tools}. Without this, the CDI spec captured at
+# generate time goes stale on the next reboot and `cuInit` returns 999
+# inside the containers — `nvidia-smi` still works (NVML doesn't need
+# UVM), but llama.cpp logs `ggml_cuda_init: failed to initialize CUDA:
+# unknown error` and silently falls back to CPU.
+#
+# This unit is SYSTEM-LEVEL (writes /etc/cdi/, must run before
+# docker.service). All other units in this directory are per-user.
+#
+# Install:
+#   sudo cp packaging/systemd/nvidia-cdi-refresh.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now nvidia-cdi-refresh.service
+
+[Unit]
+Description=Regenerate NVIDIA CDI spec for container runtimes
+After=systemd-modules-load.service local-fs.target
+Before=docker.service containerd.service
+ConditionPathExists=/usr/bin/nvidia-ctk
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Force nvidia + nvidia-uvm modules to load and create /dev/nvidia*
+# device nodes with this boot's majors before nvidia-ctk enumerates.
+# -c 0 → /dev/nvidia0,  -u → /dev/nvidia-uvm{,-tools},  -m → modeset.
+ExecStartPre=/usr/bin/nvidia-modprobe -c 0 -u -m
+ExecStart=/usr/bin/nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+
+[Install]
+WantedBy=multi-user.target

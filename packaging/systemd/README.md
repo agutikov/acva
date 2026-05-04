@@ -11,6 +11,7 @@ Per-user systemd units for the acva runtime stack. Copy to `~/.config/systemd/us
 | `acva-piper.service`   | TTS backend (Piper)    | listens on `127.0.0.1:8083`. **Placeholder until M3** — needs `piper-server.py`. |
 | `acva.service`         | Orchestrator           | listens on `127.0.0.1:9876` (control plane). Depends on the three backends. |
 | `acva.target`          | Convenience target     | brings up all four units in dependency order. |
+| `nvidia-cdi-refresh.service` | NVIDIA CDI spec regenerator | **System-level**, not per-user. Regenerates `/etc/cdi/nvidia.yaml` on every boot before `docker.service` so Docker's CDI runtime picks up the kernel's current `nvidia-uvm` device majors. Without this, `cuInit` returns 999 inside containers after some reboots and llama / Speaches silently fall back to CPU. See `docs/troubleshooting.md` § "All NNs run on CPU after reboot". |
 
 ## Path conventions used inside the units
 
@@ -39,6 +40,24 @@ systemctl --user enable --now acva.target
 ```
 
 To survive logout on a headless server: `sudo loginctl enable-linger "$USER"`.
+
+## Install (system-level NVIDIA CDI refresh)
+
+`nvidia-cdi-refresh.service` is the one unit in this directory that must be
+installed system-wide — it writes `/etc/cdi/nvidia.yaml` and must run before
+`docker.service` on each boot:
+
+```sh
+sudo cp packaging/systemd/nvidia-cdi-refresh.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now nvidia-cdi-refresh.service
+```
+
+Verify after the next reboot: `journalctl -u nvidia-cdi-refresh.service` should
+show a single successful `nvidia-ctk cdi generate` invocation, and llama logs
+should show `ggml_cuda_init: found 1 CUDA devices` rather than `failed to
+initialize CUDA: unknown error`. Requires `nvidia-utils` (provides
+`nvidia-modprobe`) and `libnvidia-container-tools` (provides `nvidia-ctk`).
 
 ## Install (system-wide, for headless / shared hosts)
 

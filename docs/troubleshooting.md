@@ -216,6 +216,57 @@ double-processes (NS over-suppresses, two AGCs fight, AEC convergence
 on a pre-cleaned signal zeros the first ~800 ms of every utterance —
 "the first words are missing").
 
+### "All NNs run on CPU after reboot"
+
+Containers come up healthy and `nvidia-smi` works inside them, but
+inference is 10-50× slower than expected. The smoking gun is in the
+llama log:
+
+```
+ggml_cuda_init: failed to initialize CUDA: unknown error
+warning: no usable GPU found, --gpu-layers option will be ignored
+common_memory_breakdown_print: |   - Host    | 2249 = 1483 + 448 + 318 |
+```
+
+Speaches falls back silently — there's no comparable error line; you'll
+just see `RTF` >> 1 in `/v1/audio/transcriptions` timings.
+
+**Cause.** The character-device majors for `/dev/nvidia-uvm` and
+`/dev/nvidia-uvm-tools` are dynamically allocated by the kernel and
+shift across reboots (and after driver updates). The CDI spec at
+`/etc/cdi/nvidia.yaml` captures them at generate time, so on the next
+boot the bind-mounted device nodes inside the container point at the
+wrong driver — `nvidia-smi` still works (NVML doesn't need UVM), but
+`cuInit` returns 999.
+
+Confirm by comparing host and container:
+
+```sh
+ls -la /dev/nvidia-uvm*
+docker exec acva-llama ls -la /dev/nvidia-uvm*
+```
+
+Different `major` numbers between the two = drift confirmed.
+
+**One-shot fix:**
+
+```sh
+sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+cd packaging/compose && docker compose restart
+```
+
+**Permanent fix:** install the boot-time refresh unit so this happens
+automatically before `docker.service` starts on every boot:
+
+```sh
+sudo cp packaging/systemd/nvidia-cdi-refresh.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now nvidia-cdi-refresh.service
+```
+
+See `packaging/systemd/README.md` § "Install (system-level NVIDIA CDI
+refresh)" for the full unit description and verification steps.
+
 ### (M7+) "Barge-in fires when it shouldn't"
 
 **`acva demo bargein`** verifies the cancellation cascade in
@@ -264,6 +315,7 @@ Common boot failures:
 | `speaches` | `model not found` on `/v1/audio/speech` | Run `scripts/download-tts.sh` after the container is up. |
 | `speaches` | `model not found` on `/v1/audio/transcriptions` | Run `scripts/download-stt.sh` after the container is up. |
 | Either container | `nvidia-smi` not visible inside container | Install the NVIDIA Container Toolkit on the host; restart Docker. |
+| Either container | `nvidia-smi` works but `cuInit` returns 999 / llama logs `failed to initialize CUDA: unknown error` and falls back to CPU after a reboot | CDI device-major drift. See § "All NNs run on CPU after reboot" above; `packaging/systemd/nvidia-cdi-refresh.service` makes the fix automatic on every boot. |
 
 ## Component → demo cross-reference
 

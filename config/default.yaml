@@ -497,7 +497,7 @@ dialogue:
 # install path already supports any speaches-ai/piper-* model). The
 # four registered Russian voices (denis, dmitri, irina, ruslan) are
 # routed by character feel.
-active_personality: bender
+active_personality: geek_enthusiast
 
 personalities:
   consultant:
