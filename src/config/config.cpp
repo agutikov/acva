@@ -216,6 +216,14 @@ std::optional<LoadError> validate(const Config& cfg) {
     if (cfg.audio.buffer_frames == 0) {
         return LoadError{"config: audio.buffer_frames: must be > 0"};
     }
+    if (!cfg.audio.test_input_wav.empty()
+        && !std::filesystem::exists(cfg.audio.test_input_wav)) {
+        return LoadError{"config: audio.test_input_wav: file not found: "
+                         + cfg.audio.test_input_wav};
+    }
+    if (cfg.audio.test_input_rate_multiplier <= 0.0) {
+        return LoadError{"config: audio.test_input_rate_multiplier: must be > 0"};
+    }
     // playback.max_queue_chunks: 0 means unbounded (pre-M7 default).
     // No upper bound to validate against — memory is the limit.
     if (cfg.dialogue.max_tts_queue_sentences == 0) {

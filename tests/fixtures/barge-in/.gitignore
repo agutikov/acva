@@ -1,0 +1,5 @@
+# Rendered by tools/build-bargein-fixtures; manifest.yaml is the
+# source of truth and is checked in. Sidecar .sha256 files are also
+# ephemeral.
+*.wav
+*.sha256

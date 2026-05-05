@@ -1,0 +1,115 @@
+# M7B barge-in validation fixtures.
+#
+# `tools/build-bargein-fixtures build` renders each entry to a 48 kHz
+# mono int16 WAV at `tests/fixtures/barge-in/<name>.wav`. The
+# capture pipeline picks the file up via `cfg.audio.test_input_wav`.
+#
+# Voices are aliases from `models.tts` in config/default.yaml. The
+# user track gets a different alias when one is available; today the
+# in-tree default has only en-amy, so user/assistant share a voice
+# for the English fixtures (the barge-in detector doesn't do voice ID,
+# so this is fine for the cancellation acceptance gates).
+#
+# Track structure:
+#   start_s  — when the synthesised PCM is placed on the timeline
+#   gain_db  — applied before the mix; assistant typically -6 to -25
+#              dB (representing post-AEC residual on the mic capture).
+# Mix is soft-clipped at -3 dBFS to avoid wrap.
+
+seed: 0
+
+fixtures:
+  - name: clean-speakers
+    description: |
+      Assistant talking; user clearly says "stop" at 1.8 s. Speaker mode,
+      AEC simulated by attenuating the assistant track to -25 dB
+      (post-AEC residual). Expected: cancellation within 400 ms.
+    duration_s: 6.0
+    expected:
+      cancellation: yes
+      max_latency_ms: 400
+    tracks:
+      - role: assistant
+        start_s: 0.0
+        tts:
+          text: "Once upon a time on the moon, a quiet astronaut waited beneath the Earth and watched the stars."
+          voice: en-amy
+          gain_db: -50
+      - role: user
+        start_s: 1.8
+        tts:
+          text: "Stop, please."
+          voice: en-amy
+          gain_db: 0
+    noise: silence
+
+  - name: noise-speakers
+    description: |
+      As clean-speakers but with a -32 dB pink-noise floor, simulating
+      a moderately busy room. Cancellation should still fire.
+    duration_s: 6.0
+    expected:
+      cancellation: yes
+      max_latency_ms: 400
+    tracks:
+      - role: assistant
+        start_s: 0.0
+        tts:
+          text: "Once upon a time on the moon, a quiet astronaut waited beneath the Earth and watched the stars."
+          voice: en-amy
+          gain_db: -50
+      - role: user
+        start_s: 1.8
+        tts:
+          text: "Stop, please."
+          voice: en-amy
+          gain_db: 0
+    noise:
+      kind: pink
+      level_db: -32
+
+  - name: headphones
+    description: |
+      No assistant audio on the mic channel (headphones — perfect
+      isolation). Just the user saying "stop" at 1.8 s. Tighter
+      latency gate (≤ 300 ms) per acceptance §2.
+    duration_s: 6.0
+    expected:
+      cancellation: yes
+      max_latency_ms: 300
+    tracks:
+      - role: user
+        start_s: 1.8
+        tts:
+          text: "Stop, please."
+          voice: en-amy
+          gain_db: 0
+    noise: silence
+
+  - name: false-positive-self
+    description: |
+      Pure assistant TTS bleeding back into the mic with simulated
+      AEC residual (-25 dB). Expected: BargeInDetector's
+      require_aec_converged + min_aec_erle_db gate suppresses; the
+      voice_barge_in_suppressed_total{cause=aec} counter increments.
+      No cancellation.
+    duration_s: 5.0
+    expected:
+      cancellation: no
+      max_false_fires: 0
+    tracks:
+      - role: assistant
+        start_s: 0.0
+        tts:
+          text: "I will keep speaking calmly while the system listens for any user interruption."
+          voice: en-amy
+          gain_db: -50
+    noise: silence
+
+  # NOTE: false-positive-tv was dropped from the M7B suite. Discriminating
+  # "the wrong person speaking" (TV news, another voice in the room) from
+  # the actual user requires content / wake-word / address detection,
+  # which lands in M8C (wake-word) or M10 (address detection). The
+  # M7 detector design (project_design.md §13) intentionally does not
+  # cover this case — VAD-onset-while-Speaking is the trigger, full stop.
+  # When M8C / M10 land, re-add this fixture and assert max_false_fires=0.

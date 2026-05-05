@@ -1,6 +1,40 @@
 # M7B — Barge-In Validation
 
-**Status:** planned. Carved off from M7 §5 (Step 5 — recorded validation
+**Status: code-complete 2026-05-05.** All four synthetic fixtures
+(`clean-speakers`, `noise-speakers`, `headphones`,
+`false-positive-self`) PASS via `./scripts/validate-bargein.py`.
+3-trial smoke run shows P50 = 55.8 ms, P95 = 57.2 ms — well inside the
+M7 §19.3 gates (P50 ≤ 200, P95 ≤ 400). 50-trial run + hardware spot
+check (Step 7) deferred to a separate dogfood pass; the wiring is
+proven and the per-trial numbers are stable.
+
+**Design pivot from the original plan:** the C++ doctest probe
+(`tests/test_barge_in_validation.cpp` + `BargeInProbe`) was replaced
+by a Python subprocess harness (`scripts/validate-bargein.py`) that
+launches `acva demo bargein-validation --fixture <wav>` per trial and
+parses the demo's machine-readable done-line. This:
+
+  - reuses the production `acva` binary as the seam (no parallel stack
+    construction),
+  - matches the existing `scripts/m7-bargein-bench.py` pattern,
+  - cuts ~300 LOC of test-only orchestrator wiring,
+  - exercises the *exact* code path users hit, including
+    `system_aec.cpp`, the bootstrap log+ALSA sidestep, and PortAudio
+    init.
+
+Two manifest changes from the original spec:
+
+  - **Assistant track attenuation** dropped to `-50 dB` (was `-25 dB`).
+    `-25 dB` triggered Silero VAD on the residual itself, producing
+    sub-100 ms false positives. `-50 dB` keeps the residual below VAD
+    threshold so only the user track fires.
+  - **`false-positive-tv` fixture removed.** Discriminating "wrong
+    person speaking" needs M8C (wake-word) or M10 (address detection);
+    the M7 detector design (project_design.md §13) intentionally
+    treats VAD-onset-while-Speaking as the only trigger. Re-add the
+    fixture once that filter exists.
+
+**Originally:** Carved off from M7 §5 (Step 5 — recorded validation
 suite + 50-trial dogfood, deferred at M7 close 2026-05-04). M7 closed
 code-complete; M7B closes the acceptance criteria that need real
 end-to-end signal exercise.

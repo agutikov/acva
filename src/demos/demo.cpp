@@ -13,6 +13,7 @@ int run_aec       (const config::Config&, std::span<const std::string>);
 int run_aec_hw    (const config::Config&, std::span<const std::string>);
 int run_aec_record(const config::Config&, std::span<const std::string>);
 int run_bargein   (const config::Config&, std::span<const std::string>);
+int run_bargein_validation(const config::Config&, std::span<const std::string>);
 int run_capture   (const config::Config&, std::span<const std::string>);
 int run_chat      (const config::Config&, std::span<const std::string>);
 int run_soak      (const config::Config&, std::span<const std::string>);
@@ -28,7 +29,7 @@ int run_tts       (const config::Config&, std::span<const std::string>);
 
 namespace {
 
-constexpr std::array<Demo, 16> kDemos{{
+constexpr std::array<Demo, 17> kDemos{{
     {"fsm",      "M0",
      "synthetic FSM driver runs 3 turns end-to-end (no backends needed)",
      run_fsm},
@@ -50,6 +51,9 @@ constexpr std::array<Demo, 16> kDemos{{
     {"bargein",  "M7",
      "auto-injected interrupt mid-turn — verifies the cancellation cascade",
      run_bargein},
+    {"bargein-validation", "M7B",
+     "fixture-driven barge-in: WAV mic → BargeInDetector → cascade (used by validate-bargein)",
+     run_bargein_validation},
     {"loopback", "M4",
      "5 s mic → speakers passthrough through the SPSC ring + 48↔16 kHz resampler",
      run_loopback},

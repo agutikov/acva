@@ -82,6 +82,11 @@ public:
 
     [[nodiscard]] bool running()   const noexcept { return running_.load(std::memory_order_acquire); }
     [[nodiscard]] bool headless()  const noexcept { return headless_.load(std::memory_order_acquire); }
+    // M7B — wav-source mode is active. start() opened a WAV pump
+    // thread instead of PortAudio. Tests poll `wav_finished()` to know
+    // when the file's last sample has been pushed into the ring.
+    [[nodiscard]] bool wav_source() const noexcept { return wav_source_.load(std::memory_order_acquire); }
+    [[nodiscard]] bool wav_finished() const noexcept { return wav_finished_.load(std::memory_order_acquire); }
 
     // Counters (read by /metrics + demos).
     [[nodiscard]] std::uint64_t frames_captured()  const noexcept { return frames_captured_.load(std::memory_order_relaxed); }
@@ -105,6 +110,8 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> headless_{false};
     std::atomic<bool> force_headless_{false};
+    std::atomic<bool> wav_source_{false};
+    std::atomic<bool> wav_finished_{false};
 
     std::atomic<const HalfDuplexGate*> gate_{nullptr};
 

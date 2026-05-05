@@ -17,6 +17,7 @@ add_library(acva_core STATIC
     demos/aec_hw.cpp
     demos/aec_record.cpp
     demos/bargein.cpp
+    demos/bargein_validation.cpp
     demos/capture.cpp
     demos/chat.cpp
     demos/demo.cpp

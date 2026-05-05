@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+"""build-bargein-fixtures — render WAVs for the M7B barge-in validation suite.
+
+Reads `tests/fixtures/barge-in/manifest.yaml` and produces one 48 kHz
+mono int16 WAV per entry. Each fixture is a mix of TTS-synthesised
+"tracks" placed at configured offsets, plus an optional noise floor.
+The script is idempotent — fixtures whose manifest entry hash matches
+the recorded sidecar (`<name>.sha256`) are skipped.
+
+The output rate (48 kHz) deliberately matches the default
+`cfg.audio.sample_rate_hz`, so the WAV-source mode in
+`audio::CaptureEngine` (M7B Step 2) can pump them straight through the
+pipeline without resampling.
+
+Subcommands
+-----------
+    build [--name N]                build all (or a single) fixture
+    list                            show what's in the manifest
+    clean                           remove all rendered WAVs (sidecars too)
+
+Requires Python 3 + PyYAML + NumPy + requests. All three are in any
+sane data-science install (Arch: python-yaml python-numpy python-requests).
+
+Speaches must be reachable for the synthesis step; default
+http://127.0.0.1:8090 (override via --speaches-url or
+ACVA_SPEACHES_URL).
+"""
+
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import hashlib
+import io
+import json
+import os
+import struct
+import sys
+import wave
+from pathlib import Path
+from typing import Any, Optional
+
+try:
+    import numpy as np
+    import requests
+    import yaml
+except ModuleNotFoundError as e:
+    sys.stderr.write(
+        f"build-bargein-fixtures: missing dependency: {e.name}\n"
+        "Install with: pip install pyyaml numpy requests\n"
+        "Or system: sudo pacman -S python-yaml python-numpy python-requests\n")
+    sys.exit(2)
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_MANIFEST = REPO_ROOT / "tests" / "fixtures" / "barge-in" / "manifest.yaml"
+DEFAULT_SPEACHES_URL = os.environ.get("ACVA_SPEACHES_URL", "http://127.0.0.1:8090")
+TARGET_RATE = 48_000          # must match cfg.audio.sample_rate_hz default
+TTS_RATE = 22_050             # Speaches /audio/speech PCM rate (piper)
+
+
+# --------------------------------------------------------------------
+# config + manifest parsing
+# --------------------------------------------------------------------
+
+@dataclasses.dataclass
+class TtsAlias:
+    model: str
+    voice: str
+
+
+def load_tts_aliases(cfg_path: Path) -> dict[str, TtsAlias]:
+    """Read the `models.tts` block from config/default.yaml."""
+    with cfg_path.open() as f:
+        doc = yaml.safe_load(f) or {}
+    models = (doc.get("models") or {}).get("tts") or {}
+    return {
+        a: TtsAlias(model=str(e.get("id", "")), voice=str(e.get("voice", "")))
+        for a, e in models.items()
+    }
+
+
+def hash_entry(entry: dict[str, Any]) -> str:
+    """Stable sha256 over a fixture entry; used for skip decisions."""
+    return hashlib.sha256(
+        json.dumps(entry, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+# --------------------------------------------------------------------
+# Speaches TTS — bare PCM at TTS_RATE
+# --------------------------------------------------------------------
+
+def synthesize(text: str,
+               alias: TtsAlias,
+               speaches_url: str,
+               timeout_s: float = 60.0) -> np.ndarray:
+    """POST /v1/audio/speech, parse bare int16 PCM into a float32 array
+    in [-1, 1] at TTS_RATE."""
+    body = {
+        "model": alias.model,
+        "input": text,
+        "voice": alias.voice,
+        "response_format": "pcm",
+    }
+    r = requests.post(
+        f"{speaches_url.rstrip('/')}/v1/audio/speech",
+        json=body,
+        timeout=timeout_s,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(
+            f"speaches TTS failed: HTTP {r.status_code}: {r.text[:200]}")
+    pcm = np.frombuffer(r.content, dtype=np.int16)
+    return pcm.astype(np.float32) / 32768.0
+
+
+# --------------------------------------------------------------------
+# DSP primitives
+# --------------------------------------------------------------------
+
+def resample(samples: np.ndarray, from_rate: int, to_rate: int) -> np.ndarray:
+    """Linear interpolation. Good enough for fixtures — the pipeline's
+    real soxr resampler runs downstream."""
+    if from_rate == to_rate:
+        return samples
+    n_out = int(round(len(samples) * to_rate / from_rate))
+    if n_out <= 0:
+        return np.zeros(0, dtype=np.float32)
+    src_indices = np.linspace(0, len(samples) - 1, n_out, dtype=np.float64)
+    return np.interp(src_indices, np.arange(len(samples)), samples).astype(np.float32)
+
+
+def db_to_lin(db: float) -> float:
+    return float(10.0 ** (db / 20.0))
+
+
+def pink_noise(n: int, rng: np.random.Generator) -> np.ndarray:
+    """Approximate pink noise via a 16-tap FIR over white noise.
+    Fixture-grade quality; not a research-paper-grade pinkening."""
+    white = rng.standard_normal(n + 16).astype(np.float32)
+    coeffs = np.array([0.99765, 0.0990460, 0.0463400, 0.0207448,
+                       0.0086852, 0.0033836, 0.0012266, 0.0004149,
+                       0.0001297, 0.0000378, 0.0000103, 0.0000026,
+                       0.0000006, 0.0000001, 0.0000000, 0.0000000],
+                      dtype=np.float32)
+    out = np.convolve(white, coeffs, mode="valid")[:n]
+    out /= max(1e-9, np.max(np.abs(out)))
+    return out
+
+
+def soft_clip(samples: np.ndarray, ceiling_db: float = -3.0) -> np.ndarray:
+    """tanh-based soft clip with a -3 dBFS knee. Avoids hard wrap on
+    over-mixed fixtures."""
+    ceiling = db_to_lin(ceiling_db)
+    return ceiling * np.tanh(samples / ceiling).astype(np.float32)
+
+
+def to_int16(samples: np.ndarray) -> np.ndarray:
+    return np.clip(samples * 32767.0, -32768.0, 32767.0).astype(np.int16)
+
+
+# --------------------------------------------------------------------
+# rendering
+# --------------------------------------------------------------------
+
+def render_track(track: dict[str, Any],
+                 aliases: dict[str, TtsAlias],
+                 speaches_url: str) -> tuple[np.ndarray, float]:
+    """Returns (samples_float32_at_TARGET_RATE, start_s)."""
+    if "tts" not in track:
+        raise ValueError(f"track missing 'tts' block: {track}")
+    tts = track["tts"]
+    voice_alias = tts["voice"]
+    if voice_alias not in aliases:
+        raise ValueError(
+            f"unknown voice alias '{voice_alias}'; configured: {sorted(aliases)}")
+    pcm22k = synthesize(tts["text"], aliases[voice_alias], speaches_url)
+    pcm48k = resample(pcm22k, TTS_RATE, TARGET_RATE)
+    gain = db_to_lin(float(tts.get("gain_db", 0.0)))
+    return pcm48k * gain, float(track.get("start_s", 0.0))
+
+
+def build_noise(spec: Any, n: int, rng: np.random.Generator) -> np.ndarray:
+    """spec may be the literal "silence", a string filename, or a dict
+    {file: ..., snr_db: ...} | {kind: pink, level_db: ...}."""
+    if spec in (None, "silence"):
+        return np.zeros(n, dtype=np.float32)
+    if isinstance(spec, dict):
+        if "file" in spec:
+            raise NotImplementedError(
+                "noise.file: not yet wired; use kind: pink for now")
+        if spec.get("kind") == "pink":
+            level = db_to_lin(float(spec.get("level_db", -40.0)))
+            return pink_noise(n, rng) * level
+    raise ValueError(f"unrecognised noise spec: {spec!r}")
+
+
+def render_fixture(entry: dict[str, Any],
+                   aliases: dict[str, TtsAlias],
+                   speaches_url: str,
+                   rng: np.random.Generator) -> np.ndarray:
+    duration_s = float(entry.get("duration_s", 6.0))
+    n = int(round(duration_s * TARGET_RATE))
+    mix = np.zeros(n, dtype=np.float32)
+
+    for tr in entry.get("tracks", []):
+        samples, start_s = render_track(tr, aliases, speaches_url)
+        offset = int(round(start_s * TARGET_RATE))
+        end = min(n, offset + len(samples))
+        if offset >= n:
+            continue
+        mix[offset:end] += samples[:end - offset]
+
+    mix += build_noise(entry.get("noise", "silence"), n, rng)
+    mix = soft_clip(mix, ceiling_db=-3.0)
+    return to_int16(mix)
+
+
+def write_wav(path: Path, samples_int16: np.ndarray) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(TARGET_RATE)
+        w.writeframes(samples_int16.tobytes())
+
+
+# --------------------------------------------------------------------
+# CLI
+# --------------------------------------------------------------------
+
+def cmd_list(manifest: Path) -> int:
+    with manifest.open() as f:
+        doc = yaml.safe_load(f) or {}
+    fixtures = doc.get("fixtures") or []
+    if not fixtures:
+        print("(manifest has no fixtures)")
+        return 0
+    for e in fixtures:
+        print(f"  {e['name']:<26} — {e.get('description', '').strip()}")
+    return 0
+
+
+def cmd_clean(manifest: Path) -> int:
+    with manifest.open() as f:
+        doc = yaml.safe_load(f) or {}
+    out_dir = manifest.parent
+    removed = 0
+    for e in doc.get("fixtures") or []:
+        for ext in (".wav", ".sha256"):
+            p = out_dir / f"{e['name']}{ext}"
+            if p.exists():
+                p.unlink()
+                removed += 1
+    print(f"removed {removed} file(s) from {out_dir}")
+    return 0
+
+
+def cmd_build(manifest: Path,
+              speaches_url: str,
+              only: Optional[str],
+              force: bool) -> int:
+    with manifest.open() as f:
+        doc = yaml.safe_load(f) or {}
+    fixtures = doc.get("fixtures") or []
+    if only is not None:
+        fixtures = [e for e in fixtures if e["name"] == only]
+        if not fixtures:
+            print(f"no fixture named '{only}' in {manifest}", file=sys.stderr)
+            return 1
+
+    cfg_path = REPO_ROOT / "config" / "default.yaml"
+    aliases = load_tts_aliases(cfg_path)
+    rng = np.random.default_rng(seed=int(doc.get("seed", 0)))
+
+    out_dir = manifest.parent
+    built = 0
+    skipped = 0
+    for entry in fixtures:
+        name = entry["name"]
+        wav_path = out_dir / f"{name}.wav"
+        sha_path = out_dir / f"{name}.sha256"
+        digest = hash_entry(entry)
+
+        if (not force
+            and wav_path.exists()
+            and sha_path.exists()
+            and sha_path.read_text().strip() == digest):
+            skipped += 1
+            continue
+
+        print(f"  rendering {name}...", flush=True)
+        samples = render_fixture(entry, aliases, speaches_url, rng)
+        write_wav(wav_path, samples)
+        sha_path.write_text(digest + "\n")
+        built += 1
+
+    print(f"built {built}, skipped {skipped} (out_dir={out_dir})")
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="build-bargein-fixtures")
+    ap.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
+    ap.add_argument("--speaches-url", default=DEFAULT_SPEACHES_URL)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p_build = sub.add_parser("build", help="render WAVs from manifest")
+    p_build.add_argument("--name", help="render only this fixture")
+    p_build.add_argument("--force", action="store_true",
+                         help="re-render even when digest matches")
+    sub.add_parser("list", help="list fixtures in the manifest")
+    sub.add_parser("clean", help="remove rendered WAVs + sidecars")
+
+    args = ap.parse_args()
+    if args.cmd == "build":
+        return cmd_build(args.manifest, args.speaches_url, args.name, args.force)
+    if args.cmd == "list":
+        return cmd_list(args.manifest)
+    if args.cmd == "clean":
+        return cmd_clean(args.manifest)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

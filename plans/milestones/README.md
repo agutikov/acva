@@ -14,7 +14,7 @@ Detailed per-milestone plans. The high-level table lives in `../project_design.m
 | M6  | `m6_aec.md` | code-complete 2026-05-03; hardware gates blocked → see M6B |
 | M6B | `m6b_aec_hardware.md` | planned (USB-mic / PipeWire system-AEC fallback) |
 | M7  | `m7_barge_in.md` | code-complete 2026-05-04; validation deferred → see M7B |
-| M7B | `m7b_barge_in_validation.md` | planned (synthetic-fixture-driven acceptance suite) |
+| M7B | `m7b_barge_in_validation.md` | code-complete 2026-05-05 (4/4 fixtures PASS; harness ./scripts/validate-bargein.py) |
 | M8A | `m8a_admin_state.md` | planned (hot-reload, privacy, memory CLI, watchdog+restart, model orchestration) |
 | M8B | `m8b_observability.md` | planned (soak, dashboard, OTLP) |
 | M8C | `m8c_distribution.md` | planned (wake-word, packaging, docs, final sweep) |

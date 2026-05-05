@@ -275,6 +275,39 @@ upstream of the cascade — usually AEC. Run the M6 diagnostic above
 (`acva demo aec-record` + `scripts/aec_analyze.py`) — gate 4 must
 pass before barge-in can be reliable.
 
+### (M7B) "Barge-in latency feels slow"
+
+**`./scripts/validate-bargein.py`** is the automated acceptance suite.
+It renders four synthetic fixtures (clean-speakers, noise-speakers,
+headphones, false-positive-self), drives each through the full
+capture → APM → VAD → BargeInDetector → cascade path via
+`acva demo bargein-validation --fixture <wav>`, and asserts the M7
+§19.3 latency gates (P50 ≤ 200 ms, P95 ≤ 400 ms, ≥ 90 % within 400 ms).
+
+Common failure shapes:
+
+- **`cancellation=Y` but `latency_ms` > 200** → cancellation cascade is
+  slow on this machine. Check for blocking I/O on the dialogue
+  subscriber thread (look for log lines from inside event handlers);
+  most often a sentence persistence write blocks the bus.
+- **`fires=0` on `clean-speakers` / `headphones`** → BargeInDetector's
+  gates are over-suppressing. Verify `cfg.barge_in.enabled: true`
+  and `cfg.barge_in.cool_down_after_turn_ms` is not absurdly large
+  (default 300 ms).
+- **`fires>0` on `false-positive-self`** → the assistant residual is
+  too loud and the AEC gate isn't suppressing. Either drop the
+  fixture's `gain_db` further (it's currently -50 dB) or check that
+  `cfg.apm.use_system_aec: true` is set so the detector's
+  `system_aec_active` path is taken.
+- **Synthetic vs real divergence** — the synthetic suite removes the
+  hardware codec / speaker non-linearity from the loop. To confirm
+  real-world parity, run the 5-trial physical spot check:
+  `./scripts/barge-in-probe.py --attempts 5` (M6B). Synthetic and
+  physical median latencies should track within ~100 ms; wider gaps
+  suggest the synthetic acoustic model needs recalibration (adjust
+  assistant track gain in `tests/fixtures/barge-in/manifest.yaml` and
+  re-render).
+
 ## Audio device
 
 If `acva demo tone` reports `headless=true` or you can't hear the

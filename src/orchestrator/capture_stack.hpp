@@ -43,6 +43,7 @@ public:
 
     // Non-owning accessors. nullptr / false when capture is disabled.
     [[nodiscard]] audio::AudioPipeline* pipeline() noexcept { return pipeline_.get(); }
+    [[nodiscard]] audio::CaptureEngine* capture()  noexcept { return capture_.get(); }
     [[nodiscard]] bool                  enabled() const noexcept { return pipeline_ != nullptr; }
 
 private:

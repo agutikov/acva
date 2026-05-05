@@ -334,6 +334,21 @@ struct AudioConfig {
     // route or have customised your asound.conf in load-bearing
     // ways.
     bool skip_alsa_full_probe = true;
+    // M7B — test-only WAV input source. When non-empty, CaptureEngine
+    // bypasses PortAudio and pumps the named WAV file's int16 samples
+    // into the capture ring at real-time pace, mimicking a microphone.
+    // The pipeline downstream (Resample → APM → VAD → Endpointer →
+    // BargeInDetector) cannot tell the difference. Used by the M7B
+    // validation suite (`scripts/validate-bargein.sh`); production
+    // configs leave this empty. Bootstrap warns when set in non-stdin
+    // / non-demo contexts.
+    std::string test_input_wav = "";
+    // M7B — WAV pump speed multiplier. 1.0 = real-time (default,
+    // required for absolute latency assertions). > 1.0 lets the
+    // 50-trial harness compress wall-clock; the BargeInDetector's
+    // latency metric is still correct because it's a delta on the
+    // same audio clock the pump advances.
+    double test_input_rate_multiplier = 1.0;
 };
 
 // M6 — WebRTC AudioProcessing (AEC + NS + AGC) tuning. Mirrors

@@ -308,6 +308,13 @@ audio:
   # also exposes a pulse interface. Set false to use the system
   # asound.conf verbatim.
   skip_alsa_full_probe: true
+  # M7B — test-only WAV input source. Set to a 16-kHz mono int16 WAV
+  # path to bypass PortAudio and pump the file's samples through the
+  # capture pipeline at real-time pace. Used by
+  # `scripts/validate-bargein.sh` and the `bargein-validation`
+  # integration tests; production configs leave this empty.
+  test_input_wav: ""
+  test_input_rate_multiplier: 1.0   # > 1.0 = compress wall-clock for offline runs
 
 playback:
   # 0 = unbounded queue. Pre-M7 default — let the full LLM response

@@ -1,20 +1,31 @@
 #include "audio/capture.hpp"
 
+#include "audio/wav.hpp"
 #include "log/log.hpp"
 
 #include <fmt/format.h>
 #include <portaudio.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cstring>
+#include <thread>
+#include <vector>
 
 namespace acva::audio {
 
 struct CaptureEngine::Impl {
     PaStream* stream         = nullptr;
     bool      pa_initialized = false;
+    // M7B WAV-source mode state. Populated when start() takes the
+    // wav-source branch; pump_thread feeds wav_samples through
+    // on_input() at real-time pace (scaled by test_input_rate_multiplier).
+    std::vector<std::int16_t> wav_samples;
+    std::uint32_t             wav_rate = 0;
+    std::thread               pump_thread;
+    std::atomic<bool>         pump_stop{false};
 };
 
 CaptureEngine::CaptureEngine(const config::AudioConfig& audio_cfg,
@@ -119,6 +130,59 @@ int pa_capture_trampoline(const void* input, void* /*output*/,
 bool CaptureEngine::start() {
     if (running_.load(std::memory_order_acquire)) return true;
 
+    // M7B WAV-source mode takes precedence over PortAudio. When set,
+    // we feed the pipeline from a file and never touch the audio HW —
+    // this is the M7B validation suite's seam, not a production path.
+    if (!cfg_.test_input_wav.empty()) {
+        std::uint32_t wav_rate = 0;
+        impl_->wav_samples = read_wav_file(cfg_.test_input_wav, wav_rate);
+        if (impl_->wav_samples.empty()) {
+            log::info("capture", fmt::format(
+                "test_input_wav: failed to read '{}' (or wrong format) — headless mode",
+                cfg_.test_input_wav));
+        } else if (wav_rate != cfg_.sample_rate_hz) {
+            log::info("capture", fmt::format(
+                "test_input_wav: rate {} Hz != cfg.audio.sample_rate_hz {} Hz "
+                "(fixture must match) — headless mode",
+                wav_rate, cfg_.sample_rate_hz));
+            impl_->wav_samples.clear();
+        } else {
+            impl_->wav_rate = wav_rate;
+            wav_source_.store(true, std::memory_order_release);
+            wav_finished_.store(false, std::memory_order_release);
+            running_.store(true, std::memory_order_release);
+            headless_.store(false, std::memory_order_release);
+
+            const std::size_t slice = std::max<std::size_t>(1, cfg_.buffer_frames);
+            const double      mult  = std::max(1e-3, cfg_.test_input_rate_multiplier);
+            impl_->pump_stop.store(false, std::memory_order_release);
+            impl_->pump_thread = std::thread([this, slice, mult] {
+                using clock = std::chrono::steady_clock;
+                const auto period_ns = std::chrono::nanoseconds(
+                    static_cast<long long>(
+                        (1e9 * static_cast<double>(slice)
+                         / static_cast<double>(cfg_.sample_rate_hz)) / mult));
+                auto next_tick = clock::now();
+                std::size_t cursor = 0;
+                while (!impl_->pump_stop.load(std::memory_order_acquire)) {
+                    if (cursor >= impl_->wav_samples.size()) break;
+                    const std::size_t take = std::min(
+                        slice, impl_->wav_samples.size() - cursor);
+                    on_input(impl_->wav_samples.data() + cursor, take);
+                    cursor += take;
+                    next_tick += period_ns;
+                    std::this_thread::sleep_until(next_tick);
+                }
+                wav_finished_.store(true, std::memory_order_release);
+            });
+            log::info("capture", fmt::format(
+                "wav-source mode: file='{}' samples={} rate={}Hz mult={:.2f}",
+                cfg_.test_input_wav, impl_->wav_samples.size(),
+                cfg_.sample_rate_hz, cfg_.test_input_rate_multiplier));
+            return true;
+        }
+    }
+
     // capture_enabled is the *runtime* gate (main.cpp checks it before
     // constructing CaptureEngine). The engine itself only goes
     // headless when explicitly forced, when the device is "none", or
@@ -195,6 +259,13 @@ bool CaptureEngine::start() {
 
 void CaptureEngine::stop() {
     if (!running_.exchange(false, std::memory_order_acq_rel)) return;
+    if (wav_source_.exchange(false, std::memory_order_acq_rel)) {
+        impl_->pump_stop.store(true, std::memory_order_release);
+        if (impl_->pump_thread.joinable()) impl_->pump_thread.join();
+        impl_->wav_samples.clear();
+        impl_->wav_samples.shrink_to_fit();
+        return;
+    }
     if (impl_->stream) {
         Pa_StopStream(impl_->stream);
         Pa_CloseStream(impl_->stream);
