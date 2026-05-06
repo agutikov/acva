@@ -12,6 +12,8 @@
 #include <stdexcept>
 #include <thread>
 #include <utility>
+#include <variant>
+#include <vector>
 
 namespace acva::http {
 
@@ -22,6 +24,48 @@ std::string serialize_metrics(const prometheus::Registry& reg) {
     std::ostringstream os;
     serializer.Serialize(os, reg.Collect());
     return os.str();
+}
+
+// JSON-escape a string for embedding inside a quoted JSON value. The
+// reload diff fields are dotted ASCII paths (`vad.onset_threshold`)
+// plus parser error messages, which can contain anything; escape
+// conservatively. We don't pull glaze in for this tiny formatter
+// because /reload's response is fixed-shape and emitted manually.
+std::string escape_json(std::string_view s) {
+    std::string out;
+    out.reserve(s.size() + 2);
+    out.push_back('"');
+    for (char c : s) {
+        switch (c) {
+            case '"':  out.append("\\\""); break;
+            case '\\': out.append("\\\\"); break;
+            case '\n': out.append("\\n");  break;
+            case '\r': out.append("\\r");  break;
+            case '\t': out.append("\\t");  break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    out.append(fmt::format("\\u{:04x}",
+                                           static_cast<unsigned char>(c)));
+                } else {
+                    out.push_back(c);
+                }
+        }
+    }
+    out.push_back('"');
+    return out;
+}
+
+std::string serialize_string_array(const std::vector<std::string>& items) {
+    std::string out;
+    out.push_back('[');
+    bool first = true;
+    for (const auto& s : items) {
+        if (!first) out.push_back(',');
+        first = false;
+        out.append(escape_json(s));
+    }
+    out.push_back(']');
+    return out;
 }
 
 std::string serialize_status(const dialogue::Fsm* fsm,
@@ -71,10 +115,12 @@ struct ControlServer::Impl {
 ControlServer::ControlServer(const config::ControlConfig& cfg,
                              std::shared_ptr<metrics::Registry> registry,
                              const dialogue::Fsm* fsm,
-                             StatusExtra status_extra)
+                             StatusExtra status_extra,
+                             ReloadHandler reload_handler)
     : registry_(std::move(registry)),
       fsm_(fsm),
       status_extra_(std::move(status_extra)),
+      reload_handler_(std::move(reload_handler)),
       impl_(std::make_unique<Impl>()) {
 
     auto& server = impl_->server;
@@ -91,6 +137,48 @@ ControlServer::ControlServer(const config::ControlConfig& cfg,
     server.Get("/health", [](const httplib::Request&, httplib::Response& res) {
         res.set_content("ok\n", "text/plain");
     });
+
+    // M8A — config hot-reload. The handler runs on httplib's request
+    // thread; ConfigReloader::reload is itself blocking (parses YAML +
+    // calls each registered callback synchronously) but takes <100 ms
+    // for the realistic config sizes we ship.
+    server.Post("/reload",
+        [handler = reload_handler_]
+        (const httplib::Request&, httplib::Response& res) {
+            if (!handler) {
+                res.status = 503;
+                res.set_content(R"({"error":"reload not configured"})" "\n",
+                                "application/json");
+                return;
+            }
+            const auto result = handler();
+            if (auto* ok = std::get_if<config::ReloadOk>(&result)) {
+                res.status = 200;
+                res.set_content(
+                    fmt::format(
+                        R"({{"status":"ok","applied":{}}})" "\n",
+                        serialize_string_array(ok->diff.changed_hot)),
+                    "application/json");
+            } else if (auto* rej = std::get_if<config::ReloadRejected>(&result)) {
+                res.status = 409;
+                res.set_content(
+                    fmt::format(
+                        R"({{"status":"rejected","restart_required":{},"applied":{}}})" "\n",
+                        serialize_string_array(rej->diff.changed_restart),
+                        serialize_string_array(rej->diff.changed_hot)),
+                    "application/json");
+            } else if (auto* err = std::get_if<config::ReloadParseError>(&result)) {
+                res.status = 400;
+                res.set_content(
+                    fmt::format(R"({{"status":"parse_error","error":{}}})" "\n",
+                                escape_json(err->message)),
+                    "application/json");
+            } else {
+                res.status = 500;
+                res.set_content(R"({"status":"internal_error"})" "\n",
+                                "application/json");
+            }
+        });
 
     if (!server.bind_to_port(cfg.bind, cfg.port)) {
         throw std::runtime_error(

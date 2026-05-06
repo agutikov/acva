@@ -36,6 +36,16 @@ spdlog::level::level_enum parse_level(std::string_view level) {
     return spdlog::level::info;
 }
 
+bool is_known_level(std::string_view level) {
+    return level == "trace"
+        || level == "debug"
+        || level == "info"
+        || level == "warn"
+        || level == "error"
+        || level == "critical"
+        || level == "off";
+}
+
 std::shared_ptr<spdlog::logger> g_logger; // NOLINT(*global*)
 
 // Build a per-run filename like "acva-20260503-150329.log" using the
@@ -206,6 +216,16 @@ void event(std::string_view component,
     }
 
     SPDLOG_LOGGER_INFO(logger(), "{}", payload);
+}
+
+void set_level(std::string_view level) {
+    if (!is_known_level(level)) {
+        SPDLOG_LOGGER_WARN(logger(),
+            "[log] set_level: unknown level '{}', leaving threshold unchanged",
+            level);
+        return;
+    }
+    logger()->set_level(parse_level(level));
 }
 
 std::shared_ptr<spdlog::logger> logger() {

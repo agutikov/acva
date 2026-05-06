@@ -94,6 +94,12 @@ public:
     // Inspect the current endpointer state — useful for the capture demo.
     [[nodiscard]] EndpointerState endpointer_state() const noexcept { return endpointer_.state(); }
 
+    // M8A — non-owning handle to the Endpointer for hot-reload of its
+    // thresholds. The Endpointer's update_thresholds() is internally
+    // synchronised, so the caller doesn't need to coordinate with the
+    // pipeline worker thread.
+    [[nodiscard]] Endpointer* endpointer() noexcept { return &endpointer_; }
+
     // For tests: drain the ring N times synchronously without spawning
     // the worker thread. Returns the number of frames processed.
     std::size_t pump_for_test(std::size_t max_frames);

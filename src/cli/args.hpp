@@ -42,13 +42,25 @@ CliArgs parse_args(int argc, char** argv);
 // args.show_help and returns EXIT_SUCCESS after.
 void print_help();
 
-// SIGINT/SIGTERM/SIGHUP handler installer. Sets the global counter
+// SIGINT/SIGTERM handler installer — they set the shutdown counter
 // returned by signal_received() so the main loop can drain cleanly.
+// SIGHUP is handled separately (M8A): it raises the reload flag
+// returned by signal_reload_requested() instead of the shutdown
+// counter, so an operator can `kill -HUP <pid>` to trigger /reload
+// without terminating the process.
 void install_signal_handlers();
 
-// Most-recent signal number, or 0 if none received yet. Read from any
-// thread.
+// Most-recent shutdown-class signal (SIGINT/SIGTERM), or 0 if none
+// received yet. Read from any thread.
 [[nodiscard]] int signal_received() noexcept;
+
+// True when a SIGHUP arrived since the last `clear_reload_request()`
+// or process start. Read from any thread.
+[[nodiscard]] bool signal_reload_requested() noexcept;
+
+// Reset the reload flag. Main loop calls this after dispatching a
+// reload so a follow-up SIGHUP fires a fresh reload.
+void clear_reload_request() noexcept;
 
 // Mark a synthetic shutdown request — the stdin EOF path uses this
 // to wake the main loop without a real signal. Argument is the

@@ -32,6 +32,7 @@ add_executable(acva_unit_tests
     test_capture_wav.cpp
     test_bus.cpp
     test_config.cpp
+    test_config_reload.cpp
     test_db.cpp
     test_endpointer.cpp
     test_fsm.cpp

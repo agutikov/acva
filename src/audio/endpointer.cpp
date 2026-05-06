@@ -27,8 +27,16 @@ Endpointer::FrameOutcome
 Endpointer::on_frame(float vad_probability,
                      std::chrono::milliseconds frame_duration,
                      std::chrono::steady_clock::time_point frame_time) {
-    const bool above_onset  = vad_probability >= cfg_.onset_threshold;
-    const bool below_offset = vad_probability <  cfg_.offset_threshold;
+    // Snapshot the config under the lock so a concurrent
+    // /reload-driven update_thresholds doesn't tear our reads of
+    // float/duration scalars. Uncontended; ~25 ns per call.
+    EndpointerConfig cfg;
+    {
+        std::lock_guard lk(cfg_mtx_);
+        cfg = cfg_;
+    }
+    const bool above_onset  = vad_probability >= cfg.onset_threshold;
+    const bool below_offset = vad_probability <  cfg.offset_threshold;
 
     switch (state_) {
         case EndpointerState::Quiet: {
@@ -44,7 +52,7 @@ Endpointer::on_frame(float vad_probability,
         case EndpointerState::Onset: {
             if (above_onset) {
                 speech_dur_ += frame_duration;
-                if (speech_dur_ >= cfg_.min_speech_ms) {
+                if (speech_dur_ >= cfg.min_speech_ms) {
                     state_     = EndpointerState::Speaking;
                     quiet_dur_ = std::chrono::milliseconds{0};
                     return FrameOutcome::SpeechStarted;
@@ -96,7 +104,7 @@ Endpointer::on_frame(float vad_probability,
             }
             if (below_offset) {
                 quiet_dur_ += frame_duration;
-                if (quiet_dur_ >= cfg_.hangover_ms) {
+                if (quiet_dur_ >= cfg.hangover_ms) {
                     // Lock in the endpoint at the most recent quiet
                     // frame's timestamp so post-padding lands at the
                     // utterance tail, not the hangover tail.
@@ -109,7 +117,7 @@ Endpointer::on_frame(float vad_probability,
             // speech nor closing the gap. Keep accumulating quiet so
             // the hangover still elapses on continued indecision.
             quiet_dur_ += frame_duration;
-            if (quiet_dur_ >= cfg_.hangover_ms) {
+            if (quiet_dur_ >= cfg.hangover_ms) {
                 state_ = EndpointerState::Quiet;
                 return FrameOutcome::SpeechEnded;
             }
@@ -117,6 +125,18 @@ Endpointer::on_frame(float vad_probability,
         }
     }
     return FrameOutcome::None;
+}
+
+EndpointerConfig Endpointer::config_snapshot() const {
+    std::lock_guard lk(cfg_mtx_);
+    return cfg_;
+}
+
+void Endpointer::update_thresholds(const EndpointerConfig& cfg) {
+    std::lock_guard lk(cfg_mtx_);
+    cfg_.onset_threshold  = cfg.onset_threshold;
+    cfg_.offset_threshold = cfg.offset_threshold;
+    cfg_.hangover_ms      = cfg.hangover_ms;
 }
 
 Endpointer::FrameOutcome

@@ -22,6 +22,7 @@ int run_fsm       (const config::Config&, std::span<const std::string>);
 int run_health    (const config::Config&, std::span<const std::string>);
 int run_llm       (const config::Config&, std::span<const std::string>);
 int run_loopback  (const config::Config&, std::span<const std::string>);
+int run_reload    (const config::Config&, std::span<const std::string>);
 int run_stt       (const config::Config&, std::span<const std::string>);
 int run_tone      (const config::Config&, std::span<const std::string>);
 int run_transcribe(const config::Config&, std::span<const std::string>);
@@ -29,7 +30,7 @@ int run_tts       (const config::Config&, std::span<const std::string>);
 
 namespace {
 
-constexpr std::array<Demo, 17> kDemos{{
+constexpr std::array<Demo, 18> kDemos{{
     {"fsm",      "M0",
      "synthetic FSM driver runs 3 turns end-to-end (no backends needed)",
      run_fsm},
@@ -81,6 +82,9 @@ constexpr std::array<Demo, 17> kDemos{{
     {"wedge",    "M6",
      "reproduce the Speaches CUDA-OOM wedge (long Russian TTS) and diagnose",
      run_wedge},
+    {"reload",   "M8A",
+     "POST /reload roundtrip — hot field accepted, restart-required rejected, parse error reported",
+     run_reload},
 }};
 
 } // namespace

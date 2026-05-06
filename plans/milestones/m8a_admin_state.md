@@ -24,7 +24,44 @@ The split from the original M8 is purely organizational: M8 was growing past 11 
 - Soak harness, dashboard, OTLP (covered by M8B).
 - Packaging, docs, final sweep (covered by M8C).
 
-## Step 1 — Config hot-reload
+## Step 1 — Config hot-reload — ✅ landed 2026-05-05
+
+Shipped:
+- `src/config/reload.{hpp,cpp}` — `ReloadDiff` (changed_hot / changed_restart),
+  `diff_configs()` pure function with hand-written field catalog,
+  `apply_hot_fields()`, `ConfigReloader` (parse → diff → mutate live + invoke
+  callbacks on success). `ReloadResult = variant<ReloadOk, ReloadRejected,
+  ReloadParseError>`.
+- Hot fields: `llm.{temperature, max_tokens}`, `dialogue.{max_assistant_sentences,
+  max_tts_queue_sentences}`, `vad.{onset_threshold, offset_threshold,
+  hangover_ms}`, `tts.tempo_wpm`, `logging.level`.
+- Restart-required surface: backend endpoints + model ids, db/model paths,
+  audio device + sample_rate, `control.{bind, port}`, `active_personality`,
+  log sink topology.
+- `log::set_level()` and `Endpointer::update_thresholds()` (mutex-guarded;
+  `on_frame` snapshots the config under the same lock so concurrent reloads
+  don't tear float reads on the audio worker thread).
+- `POST /reload` on the existing ControlServer — 200 + `{"applied":[…]}`,
+  409 + `{"restart_required":[…],"applied":[]}`, 400 + parse-error message.
+- SIGHUP no longer terminates: `cli/args` splits the handler so SIGHUP
+  raises a separate flag the main loop drains by calling the same reload
+  closure as the HTTP handler. SIGINT/SIGTERM remain shutdown.
+- `acva demo reload` exercises the full HTTP roundtrip: baseline (no diff) →
+  hot field accepted → restart-required rejected → malformed YAML.
+- Unit tests: 9 cases / 115 assertions in `tests/test_config_reload.cpp`
+  covering identical configs, every hot field detected, every
+  restart-required field rejected, mixed diffs blocked, `apply_hot_fields`
+  preserves untouched fields, parse error path, callback exceptions.
+
+Known v1 limitations:
+- The field catalog in `reload.cpp` is hand-written. Fields not enumerated
+  silently no-op on reload — operators tweaking less-common fields (e.g.
+  `supervisor.probe_timeout_ms`) need a restart for them to take effect.
+  Adding new tunables requires a one-line edit in `reload.cpp` + one line
+  in `apply_hot_fields`.
+- `active_personality` is currently restart-required even though the
+  personality registry could in principle be re-overlaid; doing that
+  safely on a live conversation is M8A Step 5 territory.
 
 Per the locked design:
 - Hot-reloadable: `llm.{temperature, max_tokens}`, `dialogue.{max_assistant_sentences, max_tts_queue_sentences}`, `vad.{onset_threshold, offset_threshold, hangover_ms}`, `tts.speed`, `logging.level`.

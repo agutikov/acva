@@ -23,6 +23,14 @@ namespace acva::log {
 // calls emit a {"msg": ...} field.
 void init(const config::LoggingConfig& cfg);
 
+// Hot-reload the logger threshold. Recognised levels match
+// LoggingConfig::level: trace | debug | info | warn | error | critical | off.
+// Unknown strings are no-ops with a warn-level diagnostic on the
+// existing logger (the level then stays at whatever init() applied).
+// Safe to call from any thread; the underlying spdlog::logger::set_level
+// is atomic.
+void set_level(std::string_view level);
+
 // Returns the shared application logger. Always non-null after init().
 [[nodiscard]] std::shared_ptr<spdlog::logger> logger();
 

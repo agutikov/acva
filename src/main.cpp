@@ -1,5 +1,6 @@
 #include "cli/args.hpp"
 #include "config/config.hpp"
+#include "config/reload.hpp"
 #include "demos/demo.hpp"
 #include "dialogue/fsm.hpp"
 #include "dialogue/turn.hpp"
@@ -215,12 +216,40 @@ int main(int argc, char** argv) {
     // up its value lazily on every /status hit.
     std::unique_ptr<acva::orchestrator::CaptureStack> capture;
 
-    // HTTP control plane (/metrics, /status, /health).
+    // M8A — config hot-reload. ConfigReloader holds a non-owning ref
+    // to the live `cfg` and applies hot-class diffs in place; the
+    // mutex inside Reload + the per-component callbacks (logger,
+    // endpointer) keep concurrent readers safe. Built before the
+    // ControlServer so we can hand its reload() closure as a request
+    // handler, and re-registered post-capture below so the endpointer
+    // callback can capture a real Endpointer pointer.
+    acva::config::ConfigReloader reloader(cfg, config_path);
+    std::mutex reload_mtx; // serialise SIGHUP and HTTP-driven reloads
+
+    reloader.register_callback("log",
+        [](const acva::config::Config& live,
+           const acva::config::ReloadDiff& diff) {
+            for (const auto& f : diff.changed_hot) {
+                if (f == "logging.level") {
+                    acva::log::set_level(live.logging.level);
+                    acva::log::info("config", fmt::format(
+                        "logging.level → {}", live.logging.level));
+                }
+            }
+        });
+
+    auto run_reload = [&reloader, &reload_mtx]() {
+        std::lock_guard lk(reload_mtx);
+        return reloader.reload();
+    };
+
+    // HTTP control plane (/metrics, /status, /health, POST /reload).
     std::unique_ptr<acva::http::ControlServer> control;
     try {
         control = std::make_unique<acva::http::ControlServer>(
             cfg.control, registry, &fsm,
-            acva::orchestrator::make_status_extra(supervisor, capture));
+            acva::orchestrator::make_status_extra(supervisor, capture),
+            run_reload);
     } catch (const std::exception& ex) {
         acva::log::error("main", fmt::format("control server failed to start: {}", ex.what()));
         supervisor.stop();
@@ -253,6 +282,40 @@ int main(int argc, char** argv) {
     capture = acva::orchestrator::build_capture_stack(
         cfg, bus, registry, fsm, loopback_sink);
     auto* audio_pipeline = capture->pipeline();
+
+    // M8A — register the endpointer reload callback now that the
+    // capture pipeline (and its Endpointer) exists. When capture is
+    // disabled, audio_pipeline is null and we skip the registration —
+    // hot reload of vad.* fields will then mutate cfg in place but
+    // affect nothing observable until the next restart enables capture.
+    if (audio_pipeline != nullptr) {
+        if (auto* ep = audio_pipeline->endpointer(); ep != nullptr) {
+            reloader.register_callback("endpointer",
+                [ep](const acva::config::Config& live,
+                     const acva::config::ReloadDiff& diff) {
+                    bool any = false;
+                    for (const auto& f : diff.changed_hot) {
+                        if (f == "vad.onset_threshold"
+                            || f == "vad.offset_threshold"
+                            || f == "vad.hangover_ms") {
+                            any = true;
+                            break;
+                        }
+                    }
+                    if (!any) return;
+                    acva::audio::EndpointerConfig ec;
+                    ec.onset_threshold  = live.vad.onset_threshold;
+                    ec.offset_threshold = live.vad.offset_threshold;
+                    ec.hangover_ms      = std::chrono::milliseconds(live.vad.hangover_ms);
+                    ep->update_thresholds(ec);
+                    acva::log::info("config", fmt::format(
+                        "vad thresholds → onset={:.3f} offset={:.3f} hangover_ms={}",
+                        live.vad.onset_threshold,
+                        live.vad.offset_threshold,
+                        live.vad.hangover_ms));
+                });
+        }
+    }
 
     // ----- M4B + M5 STT path -----
     auto stt_stack = acva::orchestrator::build_stt_stack(
@@ -345,6 +408,30 @@ int main(int argc, char** argv) {
 
     // ----- 4. Main loop -----
     while (acva::cli::signal_received() == 0) {
+        // SIGHUP-driven reload: the signal handler set the flag from
+        // an async-signal context; we drain it here on the main loop
+        // thread so reloader.reload() runs in a sane state.
+        if (acva::cli::signal_reload_requested()) {
+            acva::cli::clear_reload_request();
+            const auto result = run_reload();
+            using namespace acva::config;
+            if (auto* ok = std::get_if<ReloadOk>(&result)) {
+                acva::log::info("main", fmt::format(
+                    "reload via SIGHUP: applied {} hot field(s)",
+                    ok->diff.changed_hot.size()));
+            } else if (auto* rej = std::get_if<ReloadRejected>(&result)) {
+                acva::log::warn("main", fmt::format(
+                    "reload via SIGHUP rejected: {} restart-required field(s) "
+                    "changed (e.g. {})",
+                    rej->diff.changed_restart.size(),
+                    rej->diff.changed_restart.empty()
+                        ? std::string("(none)")
+                        : rej->diff.changed_restart.front()));
+            } else if (auto* err = std::get_if<ReloadParseError>(&result)) {
+                acva::log::warn("main", fmt::format(
+                    "reload via SIGHUP failed: {}", err->message));
+            }
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 

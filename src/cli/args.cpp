@@ -10,10 +10,15 @@ namespace acva::cli {
 
 namespace {
 
-std::atomic<int> g_signal_received{0}; // NOLINT(*global*)
+std::atomic<int>  g_signal_received{0};       // NOLINT(*global*)
+std::atomic<bool> g_reload_requested{false};  // NOLINT(*global*)
 
-void handle_signal(int sig) {
+void handle_shutdown_signal(int sig) {
     g_signal_received.store(sig);
+}
+
+void handle_reload_signal(int /*sig*/) {
+    g_reload_requested.store(true);
 }
 
 } // namespace
@@ -93,13 +98,24 @@ void print_help() {
 }
 
 void install_signal_handlers() {
-    std::signal(SIGINT, handle_signal);
-    std::signal(SIGTERM, handle_signal);
-    std::signal(SIGHUP, handle_signal);
+    std::signal(SIGINT,  handle_shutdown_signal);
+    std::signal(SIGTERM, handle_shutdown_signal);
+    // M8A — SIGHUP no longer terminates; it requests a config reload.
+    // Operators run `kill -HUP <pid>` to flip hot fields without
+    // bouncing the process. SIGINT/SIGTERM remain the shutdown path.
+    std::signal(SIGHUP,  handle_reload_signal);
 }
 
 int signal_received() noexcept {
     return g_signal_received.load(std::memory_order_relaxed);
+}
+
+bool signal_reload_requested() noexcept {
+    return g_reload_requested.load(std::memory_order_acquire);
+}
+
+void clear_reload_request() noexcept {
+    g_reload_requested.store(false, std::memory_order_release);
 }
 
 void request_shutdown(int sig) noexcept {

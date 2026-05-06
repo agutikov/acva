@@ -1,6 +1,7 @@
 #pragma once
 
 #include "config/config.hpp"
+#include "config/reload.hpp"
 #include "dialogue/fsm.hpp"
 #include "metrics/registry.hpp"
 
@@ -31,10 +32,20 @@ public:
     // supervisor headers into every TU that needs the control plane.
     using StatusExtra = std::function<std::string()>;
 
+    // M8A — invoked when a client POSTs /reload. The server shapes
+    // the HTTP response from the returned variant: ReloadOk → 200,
+    // ReloadRejected → 409, ReloadParseError → 400. Optional;
+    // omitted means /reload returns 503 ("not configured"). Calls
+    // run on the httplib request thread, so the handler must be
+    // self-synchronising (ConfigReloader::reload uses internal
+    // serialisation).
+    using ReloadHandler = std::function<config::ReloadResult()>;
+
     ControlServer(const config::ControlConfig& cfg,
                   std::shared_ptr<metrics::Registry> registry,
                   const dialogue::Fsm* fsm,
-                  StatusExtra status_extra = {});
+                  StatusExtra status_extra = {},
+                  ReloadHandler reload_handler = {});
     ~ControlServer();
 
     ControlServer(const ControlServer&) = delete;
@@ -50,6 +61,7 @@ private:
     std::shared_ptr<metrics::Registry> registry_;
     const dialogue::Fsm* fsm_; // not owned; nullable
     StatusExtra status_extra_;
+    ReloadHandler reload_handler_;
     std::unique_ptr<Impl> impl_;
     int bound_port_ = 0;
 };

@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <mutex>
 
 namespace acva::audio {
 
@@ -69,7 +70,24 @@ public:
     FrameOutcome force_endpoint(std::chrono::steady_clock::time_point now);
 
     [[nodiscard]] EndpointerState state() const noexcept { return state_; }
+    // Thread-unsafe accessor — useful in tests where the caller drives
+    // the endpointer single-threaded. Live reload paths should use
+    // `config_snapshot()` instead.
     [[nodiscard]] const EndpointerConfig& config() const noexcept { return cfg_; }
+
+    // M8A — copy of the current config under the internal mutex. Used
+    // by /reload + tests asserting on the post-update state. Cheap; the
+    // struct is small and the mutex is uncontended outside reload.
+    [[nodiscard]] EndpointerConfig config_snapshot() const;
+
+    // M8A — hot-update the three runtime-tunable thresholds
+    // (onset_threshold, offset_threshold, hangover_ms). Other fields
+    // (min_speech_ms, pre/post_padding_ms) are intentionally not
+    // overwritten — they're classified restart-required because
+    // changing them mid-utterance would alias against the in-progress
+    // pre/post padding state in UtteranceBuffer. Safe to call from any
+    // thread.
+    void update_thresholds(const EndpointerConfig& cfg);
 
     // Rolling timestamps useful to UtteranceBuffer (and tests).
     [[nodiscard]] std::chrono::steady_clock::time_point started_at() const noexcept { return started_at_; }
@@ -84,6 +102,7 @@ public:
 
 private:
     EndpointerConfig cfg_;
+    mutable std::mutex cfg_mtx_;
     std::uint32_t    sample_rate_ = 16000;
 
     EndpointerState  state_ = EndpointerState::Quiet;

@@ -13,6 +13,7 @@ add_library(acva_core STATIC
     cli/args.cpp
     config/config.cpp
     config/paths.cpp
+    config/reload.cpp
     demos/aec.cpp
     demos/aec_hw.cpp
     demos/aec_record.cpp
@@ -25,6 +26,7 @@ add_library(acva_core STATIC
     demos/health.cpp
     demos/llm.cpp
     demos/loopback.cpp
+    demos/reload.cpp
     demos/soak.cpp
     demos/stt.cpp
     demos/tone.cpp
