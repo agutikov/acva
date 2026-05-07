@@ -1,4 +1,5 @@
 #include "cli/args.hpp"
+#include "cli/memory_cli.hpp"
 #include "config/config.hpp"
 #include "config/reload.hpp"
 #include "demos/demo.hpp"
@@ -42,6 +43,16 @@
 #include <variant>
 
 int main(int argc, char** argv) {
+    // M8A Step 3 — `acva memory <subcommand>` short-circuits the
+    // normal startup. The CLI is a separate process from any running
+    // orchestrator: it opens the DB directly via memory::Database
+    // (no MemoryThread, no http server, no audio device) and exits.
+    // Detected before parse_args because the memory subcommand has
+    // its own flag grammar.
+    if (argc >= 2 && std::string{argv[1]} == "memory") {
+        return acva::cli::run_memory_subcommand(argc - 2, argv + 2);
+    }
+
     auto args = acva::cli::parse_args(argc, argv);
     if (args.show_help) {
         acva::cli::print_help();

@@ -365,6 +365,146 @@ Result<std::vector<FactRow>> Repository::facts_with_min_confidence(double min) {
     return rows;
 }
 
+// ----- M8A Step 3 CLI listings + targeted deletes -----
+
+Result<std::vector<SessionRow>> Repository::all_sessions(int limit) {
+    Statement stmt(db_.raw(),
+        "SELECT id, started_at, ended_at, title FROM sessions "
+        "ORDER BY id DESC LIMIT ?1;");
+    if (!stmt.ok()) return DbError{"prepare all_sessions"};
+    stmt.bind(1, static_cast<std::int64_t>(limit));
+    std::vector<SessionRow> rows;
+    Statement::StepResult r;
+    while ((r = stmt.step()) == Statement::StepResult::Row) {
+        rows.push_back(SessionRow{
+            .id         = stmt.column_int64(0),
+            .started_at = stmt.column_int64(1),
+            .ended_at   = stmt.column_int64_opt(2),
+            .title      = stmt.column_text_opt(3),
+        });
+    }
+    if (r == Statement::StepResult::Error) return DbError{"all_sessions step"};
+    return rows;
+}
+
+Result<std::optional<SessionRow>> Repository::get_session(SessionId id) {
+    Statement stmt(db_.raw(),
+        "SELECT id, started_at, ended_at, title FROM sessions WHERE id = ?1;");
+    if (!stmt.ok()) return DbError{"prepare get_session"};
+    stmt.bind(1, id);
+    auto r = stmt.step();
+    if (r == Statement::StepResult::Done) return std::optional<SessionRow>{};
+    if (r == Statement::StepResult::Error) return DbError{"get_session step"};
+    SessionRow row{
+        .id         = stmt.column_int64(0),
+        .started_at = stmt.column_int64(1),
+        .ended_at   = stmt.column_int64_opt(2),
+        .title      = stmt.column_text_opt(3),
+    };
+    return std::optional<SessionRow>{row};
+}
+
+Result<std::vector<TurnRow>> Repository::all_turns(int limit) {
+    Statement stmt(db_.raw(),
+        "SELECT id, session_id, role, text, lang, started_at, ended_at, "
+        "       status, interrupted_at_sentence, audio_path "
+        "FROM turns ORDER BY id DESC LIMIT ?1;");
+    if (!stmt.ok()) return DbError{"prepare all_turns"};
+    stmt.bind(1, static_cast<std::int64_t>(limit));
+    std::vector<TurnRow> rows;
+    Statement::StepResult r;
+    while ((r = stmt.step()) == Statement::StepResult::Row) {
+        rows.push_back(TurnRow{
+            .id                      = stmt.column_int64(0),
+            .session_id              = stmt.column_int64(1),
+            .role                    = parse_role(stmt.column_text(2)),
+            .text                    = stmt.column_text_opt(3),
+            .lang                    = stmt.column_text_opt(4),
+            .started_at              = stmt.column_int64(5),
+            .ended_at                = stmt.column_int64_opt(6),
+            .status                  = parse_status(stmt.column_text(7)),
+            .interrupted_at_sentence = stmt.column_int64_opt(8),
+            .audio_path              = stmt.column_text_opt(9),
+        });
+    }
+    if (r == Statement::StepResult::Error) return DbError{"all_turns step"};
+    return rows;
+}
+
+Result<std::optional<TurnRow>> Repository::get_turn(TurnId id) {
+    Statement stmt(db_.raw(),
+        "SELECT id, session_id, role, text, lang, started_at, ended_at, "
+        "       status, interrupted_at_sentence, audio_path "
+        "FROM turns WHERE id = ?1;");
+    if (!stmt.ok()) return DbError{"prepare get_turn"};
+    stmt.bind(1, id);
+    auto r = stmt.step();
+    if (r == Statement::StepResult::Done) return std::optional<TurnRow>{};
+    if (r == Statement::StepResult::Error) return DbError{"get_turn step"};
+    TurnRow row{
+        .id                      = stmt.column_int64(0),
+        .session_id              = stmt.column_int64(1),
+        .role                    = parse_role(stmt.column_text(2)),
+        .text                    = stmt.column_text_opt(3),
+        .lang                    = stmt.column_text_opt(4),
+        .started_at              = stmt.column_int64(5),
+        .ended_at                = stmt.column_int64_opt(6),
+        .status                  = parse_status(stmt.column_text(7)),
+        .interrupted_at_sentence = stmt.column_int64_opt(8),
+        .audio_path              = stmt.column_text_opt(9),
+    };
+    return std::optional<TurnRow>{row};
+}
+
+Result<std::vector<SummaryRow>> Repository::summaries_by_session(SessionId session) {
+    Statement stmt(db_.raw(),
+        "SELECT id, session_id, range_start_turn, range_end_turn, summary, "
+        "       lang, source_hash, created_at FROM summaries "
+        "WHERE session_id = ?1 ORDER BY range_end_turn DESC;");
+    if (!stmt.ok()) return DbError{"prepare summaries_by_session"};
+    stmt.bind(1, session);
+    std::vector<SummaryRow> rows;
+    Statement::StepResult r;
+    while ((r = stmt.step()) == Statement::StepResult::Row) {
+        rows.push_back(SummaryRow{
+            .id                = stmt.column_int64(0),
+            .session_id        = stmt.column_int64(1),
+            .range_start_turn  = stmt.column_int64(2),
+            .range_end_turn    = stmt.column_int64(3),
+            .summary           = stmt.column_text(4),
+            .lang              = stmt.column_text(5),
+            .source_hash       = stmt.column_text(6),
+            .created_at        = stmt.column_int64(7),
+        });
+    }
+    if (r == Statement::StepResult::Error) return DbError{"summaries_by_session step"};
+    return rows;
+}
+
+std::optional<DbError> Repository::delete_turn(TurnId id) {
+    Statement stmt(db_.raw(), "DELETE FROM turns WHERE id = ?1;");
+    if (!stmt.ok()) return DbError{"prepare delete_turn"};
+    stmt.bind(1, id);
+    if (stmt.step() != Statement::StepResult::Done) {
+        return DbError{"delete_turn step"};
+    }
+    return std::nullopt;
+}
+
+std::optional<DbError> Repository::delete_fact(FactId id) {
+    Statement stmt(db_.raw(), "DELETE FROM facts WHERE id = ?1;");
+    if (!stmt.ok()) return DbError{"prepare delete_fact"};
+    stmt.bind(1, id);
+    if (stmt.step() != Statement::StepResult::Done) {
+        return DbError{"delete_fact step"};
+    }
+    return std::nullopt;
+}
+
+std::optional<DbError> Repository::vacuum() {
+    return db_.exec("VACUUM;");
+}
+
 // ----- settings -----
 
 std::optional<DbError> Repository::set_setting(std::string_view key,

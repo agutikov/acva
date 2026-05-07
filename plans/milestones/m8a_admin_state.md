@@ -151,7 +151,60 @@ Wire the remaining HTTP endpoints:
 - `src/dialogue/session.hpp/cpp`.
 - Owns the current session id; transitions on idle timeout (default 30 min) or explicit command.
 
-## Step 3 — Memory CRUD CLI
+## Step 3 — Memory CRUD CLI — ✅ landed 2026-05-07
+
+Shipped:
+- `src/cli/memory_cli.{hpp,cpp}` — `acva memory <subcommand>` dispatcher.
+  11 subcommands: `sessions`, `session <id> [--turns]`, `turns`,
+  `turn <id>`, `facts`, `summaries`, `delete-turn`, `delete-session`,
+  `delete-fact`, `wipe`, `vacuum`. Common flags: `--config PATH`,
+  `--db PATH`, `--limit N`, `--session ID`, `--json` (one object per
+  line for jq), `--yes` (required for `wipe`), `--dry-run` (preview
+  delete-* without applying). Exit codes: 0 on success, 1 on user
+  error (missing arg, unknown subcommand, target not found), 2 on
+  DB system error.
+- `main.cpp` short-circuits when `argv[1] == "memory"` and dispatches
+  before parse_args runs — the memory CLI has its own flag grammar
+  (positional `<id>` arguments would otherwise fail acva's
+  unknown-arg check).
+- New Repository methods used by the CLI: `all_sessions(limit)`,
+  `get_session(id)`, `all_turns(limit)`, `get_turn(id)`,
+  `summaries_by_session(id)`, `delete_turn(id)`, `delete_fact(id)`,
+  `vacuum()`.
+- The CLI is process-isolated from a running orchestrator: opens
+  Database directly (no MemoryThread). Read paths coexist with a live
+  acva via SQLite's WAL; write paths block on SQLite's busy_timeout
+  (5 s) and surface SQLITE_BUSY errors to the user verbatim.
+- `--json` output is hand-formatted (not glaze) — single-pass printf
+  per row, control characters JSON-escaped, optional fields rendered
+  as `null` when absent.
+- Tests:
+  - `tests/test_repository.cpp` — 5 new cases for the CLI-supporting
+    Repository methods (all_sessions ordering, get_session miss,
+    all_turns + get_turn, delete_turn / delete_fact, summaries
+    filter, vacuum).
+  - `tests/test_memory_cli.cpp` — 12 cases driving the dispatcher
+    end-to-end against tmp DBs, including stdout-capture assertions
+    for `sessions` (table) and `sessions --json` (`{"id":...`),
+    delete-turn/--dry-run row-count invariants, wipe/--yes, vacuum,
+    unknown subcommand, missing DB.
+  - Full unit suite: **332 cases** (was 315), all green.
+
+Known v1 limitations:
+- `acva memory facts --session ID` filters in-process (loads all facts,
+  drops those whose `source_turn_id` belongs to a different session)
+  rather than via SQL JOIN. Fine at current data volumes; revisit if a
+  user accumulates millions of fact rows.
+- The `wipe` subcommand uses Repository's existing `wipe_all` (DROP +
+  recreate schema), the same code path Step 2's HTTP `/wipe?all=true`
+  uses. There's no separate "wipe just one table" mode.
+- No lockfile-based "is acva running?" pre-flight check; we rely on
+  SQLite's BUSY behavior + busy_timeout (5 s). Adding a structured
+  check would require either a lockfile convention or scanning
+  `/proc/*/cmdline` — both are heavier than the current behavior
+  warrants for v1.
+
+## Step 3 — Memory CRUD CLI (original spec)
 
 A small offline command-line tool that opens the SQLite DB directly
 (no live orchestrator required) and exposes list / show / delete /

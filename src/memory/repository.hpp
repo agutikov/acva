@@ -97,6 +97,32 @@ public:
     // call against an empty DB.
     [[nodiscard]] std::optional<DbError> wipe_all();
 
+    // M8A Step 3 — listings used by `acva memory <subcommand>` for
+    // forensics + cleanup. `all_sessions` returns rows in newest-first
+    // order regardless of `ended_at` (sessions_open_no_ended_at filters
+    // by NULL ended_at; that's not what an operator browsing history
+    // wants). `get_session` is the single-row equivalent.
+    [[nodiscard]] Result<std::vector<SessionRow>> all_sessions(int limit);
+    [[nodiscard]] Result<std::optional<SessionRow>> get_session(SessionId id);
+
+    // `all_turns` is the cross-session listing for `acva memory turns`.
+    // `get_turn` is the single-row lookup; both are consumed by the
+    // CLI and tests.
+    [[nodiscard]] Result<std::vector<TurnRow>> all_turns(int limit);
+    [[nodiscard]] Result<std::optional<TurnRow>> get_turn(TurnId id);
+
+    // Per-session summary listing for `acva memory summaries --session ID`.
+    [[nodiscard]] Result<std::vector<SummaryRow>> summaries_by_session(SessionId session);
+
+    // Targeted deletes for `acva memory delete-turn`/`delete-fact`.
+    [[nodiscard]] std::optional<DbError> delete_turn(TurnId id);
+    [[nodiscard]] std::optional<DbError> delete_fact(FactId id);
+
+    // SQLite VACUUM — reclaim space from a heavily-edited DB. Cannot
+    // run inside a transaction; the wrapper opens a fresh connection
+    // implicitly via Database::exec.
+    [[nodiscard]] std::optional<DbError> vacuum();
+
     // ----- turns -----
     [[nodiscard]] Result<TurnId> insert_turn(SessionId session, TurnRole role,
                                               std::optional<std::string> text,

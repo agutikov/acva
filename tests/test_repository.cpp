@@ -184,3 +184,120 @@ TEST_CASE("repo: wipe_all empties everything and is idempotent") {
     auto sid2_or = repo.insert_session(mem::now_ms(), std::nullopt);
     REQUIRE(std::holds_alternative<mem::SessionId>(sid2_or));
 }
+
+TEST_CASE("repo: all_sessions newest-first, get_session round trip") {
+    auto p = tmp_db("all-sessions");
+    auto db = open_or_die(p);
+    mem::Repository repo(db);
+
+    auto a = std::get<mem::SessionId>(repo.insert_session(1000, std::nullopt));
+    auto b = std::get<mem::SessionId>(repo.insert_session(2000, std::nullopt));
+    auto c = std::get<mem::SessionId>(repo.insert_session(3000, std::nullopt));
+
+    auto rows_or = repo.all_sessions(10);
+    REQUIRE(std::holds_alternative<std::vector<mem::SessionRow>>(rows_or));
+    const auto& rows = std::get<std::vector<mem::SessionRow>>(rows_or);
+    REQUIRE(rows.size() == 3);
+    CHECK(rows[0].id == c);
+    CHECK(rows[1].id == b);
+    CHECK(rows[2].id == a);
+
+    // limit honored.
+    auto top1_or = repo.all_sessions(1);
+    REQUIRE(std::holds_alternative<std::vector<mem::SessionRow>>(top1_or));
+    CHECK(std::get<std::vector<mem::SessionRow>>(top1_or).size() == 1);
+
+    auto found = repo.get_session(b);
+    REQUIRE(std::holds_alternative<std::optional<mem::SessionRow>>(found));
+    REQUIRE(std::get<std::optional<mem::SessionRow>>(found).has_value());
+    CHECK(std::get<std::optional<mem::SessionRow>>(found)->started_at == 2000);
+
+    auto miss = repo.get_session(99999);
+    REQUIRE(std::holds_alternative<std::optional<mem::SessionRow>>(miss));
+    CHECK_FALSE(std::get<std::optional<mem::SessionRow>>(miss).has_value());
+}
+
+TEST_CASE("repo: all_turns + get_turn") {
+    auto p = tmp_db("all-turns");
+    auto db = open_or_die(p);
+    mem::Repository repo(db);
+
+    auto sid = std::get<mem::SessionId>(repo.insert_session(mem::now_ms(), std::nullopt));
+    auto t1 = std::get<mem::TurnId>(repo.insert_turn(sid, mem::TurnRole::User,
+                                     std::string("hi"), std::string("en"),
+                                     mem::now_ms(), mem::TurnStatus::Committed));
+    auto t2 = std::get<mem::TurnId>(repo.insert_turn(sid, mem::TurnRole::Assistant,
+                                     std::string("hello"), std::string("en"),
+                                     mem::now_ms(), mem::TurnStatus::Committed));
+
+    auto rows = repo.all_turns(10);
+    REQUIRE(std::holds_alternative<std::vector<mem::TurnRow>>(rows));
+    REQUIRE(std::get<std::vector<mem::TurnRow>>(rows).size() == 2);
+    CHECK(std::get<std::vector<mem::TurnRow>>(rows)[0].id == t2);
+
+    auto found = repo.get_turn(t1);
+    REQUIRE(std::holds_alternative<std::optional<mem::TurnRow>>(found));
+    REQUIRE(std::get<std::optional<mem::TurnRow>>(found).has_value());
+    CHECK(*std::get<std::optional<mem::TurnRow>>(found)->text == "hi");
+}
+
+TEST_CASE("repo: delete_turn / delete_fact targeted removal") {
+    auto p = tmp_db("delete-targeted");
+    auto db = open_or_die(p);
+    mem::Repository repo(db);
+
+    auto sid = std::get<mem::SessionId>(repo.insert_session(mem::now_ms(), std::nullopt));
+    auto t1 = std::get<mem::TurnId>(repo.insert_turn(sid, mem::TurnRole::User,
+                                     std::string("a"), std::string("en"),
+                                     mem::now_ms(), mem::TurnStatus::Committed));
+    auto t2 = std::get<mem::TurnId>(repo.insert_turn(sid, mem::TurnRole::User,
+                                     std::string("b"), std::string("en"),
+                                     mem::now_ms(), mem::TurnStatus::Committed));
+
+    CHECK_FALSE(repo.delete_turn(t1).has_value());
+    auto rows = repo.all_turns(10);
+    REQUIRE(std::holds_alternative<std::vector<mem::TurnRow>>(rows));
+    REQUIRE(std::get<std::vector<mem::TurnRow>>(rows).size() == 1);
+    CHECK(std::get<std::vector<mem::TurnRow>>(rows)[0].id == t2);
+
+    CHECK_FALSE(repo.upsert_fact("name", std::string_view("en"),
+                                   "Bob", t2, 0.9, mem::now_ms()).has_value());
+    auto facts = repo.facts_with_min_confidence(0.0);
+    REQUIRE(std::holds_alternative<std::vector<mem::FactRow>>(facts));
+    REQUIRE(std::get<std::vector<mem::FactRow>>(facts).size() == 1);
+    auto fid = std::get<std::vector<mem::FactRow>>(facts).front().id;
+
+    CHECK_FALSE(repo.delete_fact(fid).has_value());
+    facts = repo.facts_with_min_confidence(0.0);
+    CHECK(std::get<std::vector<mem::FactRow>>(facts).empty());
+}
+
+TEST_CASE("repo: summaries_by_session filters by session") {
+    auto p = tmp_db("summaries-by-session");
+    auto db = open_or_die(p);
+    mem::Repository repo(db);
+
+    auto a = std::get<mem::SessionId>(repo.insert_session(mem::now_ms(), std::nullopt));
+    auto b = std::get<mem::SessionId>(repo.insert_session(mem::now_ms(), std::nullopt));
+
+    (void)repo.insert_summary(a, 1, 5, "summary-a-1", "en", "h1", mem::now_ms());
+    (void)repo.insert_summary(a, 6, 10, "summary-a-2", "en", "h2", mem::now_ms());
+    (void)repo.insert_summary(b, 1, 3, "summary-b", "en", "h3", mem::now_ms());
+
+    auto a_rows = repo.summaries_by_session(a);
+    REQUIRE(std::holds_alternative<std::vector<mem::SummaryRow>>(a_rows));
+    CHECK(std::get<std::vector<mem::SummaryRow>>(a_rows).size() == 2);
+
+    auto b_rows = repo.summaries_by_session(b);
+    REQUIRE(std::holds_alternative<std::vector<mem::SummaryRow>>(b_rows));
+    CHECK(std::get<std::vector<mem::SummaryRow>>(b_rows).size() == 1);
+}
+
+TEST_CASE("repo: vacuum is a no-op success on a healthy DB") {
+    auto p = tmp_db("vacuum");
+    auto db = open_or_die(p);
+    mem::Repository repo(db);
+
+    (void)repo.insert_session(mem::now_ms(), std::nullopt);
+    CHECK_FALSE(repo.vacuum().has_value());
+}

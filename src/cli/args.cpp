@@ -92,6 +92,9 @@ void print_help() {
                  "                       the catalog. Trailing args after the demo\n"
                  "                       name are passed through to the demo (e.g.\n"
                  "                       `acva demo bargein --delay-ms 800`).\n"
+                 "  memory               Offline memory CRUD CLI. `acva memory --help`\n"
+                 "                       lists every subcommand (sessions / turns /\n"
+                 "                       wipe / vacuum / ...).\n"
                  "\n"
                  "To exercise the FSM without backends, set\n"
                  "`pipeline.fake_driver_enabled: true` in the YAML.\n";

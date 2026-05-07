@@ -11,6 +11,7 @@ add_library(acva_core STATIC
     audio/vad.cpp
     audio/wav.cpp
     cli/args.cpp
+    cli/memory_cli.cpp
     config/config.cpp
     config/paths.cpp
     config/reload.cpp
