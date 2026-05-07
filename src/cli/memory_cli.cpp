@@ -5,6 +5,8 @@
 #include "memory/db.hpp"
 #include "memory/repository.hpp"
 
+#include <httplib.h>
+
 #include <fmt/format.h>
 
 #include <cstdio>
@@ -34,6 +36,9 @@ struct Options {
     bool yes      = false;
     bool dry_run  = false;
     bool show_turns = false;
+    // M8A Step 4 — `acva memory restart` HTTP target.
+    std::string host = "127.0.0.1";
+    int         port = 9876;
     std::vector<std::string> positional;  // non-flag args, e.g. <id>
 };
 
@@ -97,6 +102,19 @@ bool parse_options(int argc, char** argv, Options& out) {
             out.db_path = v;
         } else if (a.starts_with("--db=")) {
             out.db_path = std::string(a.substr(5));
+        } else if (a == "--host") {
+            const char* v = need_value("--host");
+            if (!v) return false;
+            out.host = v;
+        } else if (a == "--port") {
+            const char* v = need_value("--port");
+            if (!v) return false;
+            std::int64_t n = 0;
+            if (!parse_int(v, n) || n <= 0 || n > 65535) {
+                std::fprintf(stderr, "acva memory: --port must be 1..65535\n");
+                return false;
+            }
+            out.port = static_cast<int>(n);
         } else if (a == "-h" || a == "--help") {
             print_memory_help();
             std::exit(EXIT_SUCCESS);
@@ -613,6 +631,33 @@ int cmd_wipe(memory::Repository& repo, const Options& opts) {
     return 0;
 }
 
+int cmd_restart(const Options& opts) {
+    httplib::Client cli(opts.host, opts.port);
+    cli.set_read_timeout(5);
+    cli.set_connection_timeout(2);
+    auto res = cli.Post("/restart", "", "application/json");
+    if (!res) {
+        std::fprintf(stderr,
+            "acva memory restart: no response from %s:%d (is acva running?)\n",
+            opts.host.c_str(), opts.port);
+        return 2;
+    }
+    if (res->status == 202) {
+        std::printf("restart accepted (HTTP 202)\n");
+        return 0;
+    }
+    if (res->status == 409) {
+        std::fprintf(stderr,
+            "acva memory restart: rejected (HTTP 409): %s\n",
+            res->body.c_str());
+        return 1;
+    }
+    std::fprintf(stderr,
+        "acva memory restart: unexpected HTTP %d: %s\n",
+        res->status, res->body.c_str());
+    return 2;
+}
+
 int cmd_vacuum(memory::Repository& repo, const Options& /*opts*/) {
     if (auto err = repo.vacuum(); err.has_value()) {
         std::fprintf(stderr, "acva memory vacuum: %s\n", err->message.c_str());
@@ -652,6 +697,8 @@ void print_memory_help() {
         "  wipe                 --yes\n"
         "                          drops and recreates the schema\n"
         "  vacuum                  SQLite VACUUM to reclaim space\n"
+        "  restart        [--host HOST] [--port N]\n"
+        "                          POST /restart to a running orchestrator\n"
         "\n"
         "Common options:\n"
         "  --config PATH    YAML config (default: same XDG search as `acva`)\n"
@@ -659,6 +706,8 @@ void print_memory_help() {
         "  --json           Emit one JSON object per line for jq piping\n"
         "  --yes            Required for `wipe`; no prompt\n"
         "  --dry-run        Preview a delete without applying\n"
+        "  --host HOST      Orchestrator host for `restart` (default 127.0.0.1)\n"
+        "  --port N         Orchestrator port for `restart` (default 9876)\n"
         "  -h, --help       Show this help and exit\n",
         stdout);
 }
@@ -678,6 +727,10 @@ int run_memory_subcommand(int argc, char** argv) {
     if (!parse_options(argc - 1, argv + 1, opts)) {
         return 1;
     }
+
+    // `restart` talks to a running orchestrator over HTTP — no DB
+    // open required.
+    if (sub == "restart") return cmd_restart(opts);
 
     auto db_opt = open_db_or_die(opts);
     if (!db_opt.has_value()) return 2;

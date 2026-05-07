@@ -117,12 +117,14 @@ ControlServer::ControlServer(const config::ControlConfig& cfg,
                              const dialogue::Fsm* fsm,
                              StatusExtra status_extra,
                              ReloadHandler reload_handler,
-                             PrivacyHandlers privacy)
+                             PrivacyHandlers privacy,
+                             RestartHandler restart_handler)
     : registry_(std::move(registry)),
       fsm_(fsm),
       status_extra_(std::move(status_extra)),
       reload_handler_(std::move(reload_handler)),
       privacy_(std::move(privacy)),
+      restart_handler_(std::move(restart_handler)),
       impl_(std::make_unique<Impl>()) {
 
     auto& server = impl_->server;
@@ -315,6 +317,35 @@ ControlServer::ControlServer(const config::ControlConfig& cfg,
             res.status = 400;
             res.set_content(
                 R"({"error":"specify ?session=<id> or ?all=true"})" "\n",
+                "application/json");
+        });
+
+    // ----- M8A Step 4: graceful warm restart -----
+    server.Post("/restart",
+        [handler = restart_handler_]
+        (const httplib::Request&, httplib::Response& res) {
+            if (!handler) {
+                res.status = 503;
+                res.set_content(R"({"error":"restart not configured"})" "\n",
+                                "application/json");
+                return;
+            }
+            const auto reject = handler();
+            if (!reject.has_value()) {
+                // Accepted. We send 202 and return — the server's
+                // listen thread keeps running just long enough for
+                // this response to drain; main.cpp's restart driver
+                // then exec's, replacing the process.
+                res.status = 202;
+                res.set_content(
+                    R"({"status":"accepted","message":"orchestrator restarting"})" "\n",
+                    "application/json");
+                return;
+            }
+            res.status = 409;
+            res.set_content(
+                fmt::format(R"({{"status":"rejected","error":{}}})" "\n",
+                            escape_json(*reject)),
                 "application/json");
         });
 

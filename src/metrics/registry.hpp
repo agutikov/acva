@@ -125,6 +125,11 @@ public:
     void set_barge_in_suppressed_cooldown(double total);
     void set_barge_in_suppressed_aec(double total);
 
+    // M8A Step 4 — watchdog stuck-fire counter, labelled by FSM state at
+    // the moment of firing. Incremented once per stuck-detection event
+    // (the watchdog itself debounces to avoid spam).
+    void on_stuck(const char* fsm_state);
+
     // Subscribe metrics-collection handlers to the bus. Call after
     // construction. Returns subscriptions which the caller must keep alive.
     [[nodiscard]] std::vector<event::SubscriptionHandle> subscribe(event::EventBus& bus);
@@ -193,6 +198,9 @@ private:
     prometheus::Gauge*                         barge_in_suppressed_metric_      = nullptr;
     prometheus::Gauge*                         barge_in_suppressed_cooldown_metric_ = nullptr;
     prometheus::Gauge*                         barge_in_suppressed_aec_metric_      = nullptr;
+
+    // M8A Step 4 — watchdog stuck-fire counter, labelled by FSM state.
+    prometheus::Family<prometheus::Counter>*   stuck_total_                     = nullptr;
 
     // Per-(turn, seq) TTS timer state, captured between TtsStarted and
     // the first TtsAudioChunk so we can compute first-audio latency.

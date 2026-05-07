@@ -505,6 +505,68 @@ std::optional<DbError> Repository::vacuum() {
     return db_.exec("VACUUM;");
 }
 
+// ----- M8A Step 4: runtime checkpoint singleton -----
+
+std::optional<DbError>
+Repository::upsert_runtime_state(const RuntimeStateRow& row) {
+    Statement stmt(db_.raw(),
+        "INSERT INTO runtime_state(id, session_id, active_turn_id, fsm_state, "
+        "                          last_partial, config_hash, checkpoint_at) "
+        "VALUES(1, ?1, ?2, ?3, ?4, ?5, ?6) "
+        "ON CONFLICT(id) DO UPDATE SET "
+        "  session_id = excluded.session_id, "
+        "  active_turn_id = excluded.active_turn_id, "
+        "  fsm_state = excluded.fsm_state, "
+        "  last_partial = excluded.last_partial, "
+        "  config_hash = excluded.config_hash, "
+        "  checkpoint_at = excluded.checkpoint_at;");
+    if (!stmt.ok()) return DbError{"prepare upsert_runtime_state"};
+    stmt.bind(1, row.session_id);
+    stmt.bind(2, row.active_turn_id);
+    stmt.bind(3, std::string_view{row.fsm_state});
+    stmt.bind(4, row.last_partial);
+    stmt.bind(5, row.config_hash);
+    stmt.bind(6, static_cast<std::int64_t>(row.checkpoint_at));
+    if (stmt.step() != Statement::StepResult::Done) {
+        return DbError{"upsert_runtime_state step"};
+    }
+    return std::nullopt;
+}
+
+Result<std::optional<RuntimeStateRow>> Repository::read_runtime_state() {
+    Statement stmt(db_.raw(),
+        "SELECT session_id, active_turn_id, fsm_state, last_partial, "
+        "       config_hash, checkpoint_at "
+        "FROM runtime_state WHERE id = 1;");
+    if (!stmt.ok()) return DbError{"prepare read_runtime_state"};
+    auto r = stmt.step();
+    if (r == Statement::StepResult::Done) return std::optional<RuntimeStateRow>{};
+    if (r == Statement::StepResult::Error) return DbError{"read_runtime_state step"};
+    RuntimeStateRow row{
+        .session_id     = stmt.column_int64(0),
+        .active_turn_id = stmt.column_int64_opt(1),
+        .fsm_state      = stmt.column_text(2),
+        .last_partial   = stmt.column_text_opt(3),
+        .config_hash    = stmt.column_text_opt(4),
+        .checkpoint_at  = stmt.column_int64(5),
+    };
+    return std::optional<RuntimeStateRow>{row};
+}
+
+std::optional<DbError> Repository::clear_runtime_state() {
+    return db_.exec("DELETE FROM runtime_state;");
+}
+
+std::optional<DbError>
+checkpoint_runtime_sync(const std::filesystem::path& db_path,
+                         const RuntimeStateRow& row) {
+    auto db_or = Database::open(db_path);
+    if (auto* err = std::get_if<DbError>(&db_or)) return *err;
+    auto db = std::move(std::get<Database>(db_or));
+    Repository repo(db);
+    return repo.upsert_runtime_state(row);
+}
+
 // ----- settings -----
 
 std::optional<DbError> Repository::set_setting(std::string_view key,

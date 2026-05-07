@@ -67,6 +67,7 @@ add_executable(acva_unit_tests
     test_tts_bridge.cpp
     test_turn_writer.cpp
     test_utterance.cpp
+    test_watchdog.cpp
 )
 
 target_link_libraries(acva_unit_tests

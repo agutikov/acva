@@ -53,4 +53,16 @@ namespace acva::config {
 [[nodiscard]] std::variant<std::filesystem::path, LoadError>
 resolve_config_path(std::string_view cli);
 
+// M8A Step 4 — small stable digest of the config-file bytes. Used by
+// the runtime checkpoint to detect "the operator restarted to apply
+// config changes that change the FSM topology or model identity";
+// when the digest differs across a restart we discard the checkpoint
+// rather than silently resume on a stale session.
+//
+// Empty path / unreadable file returns an empty string. Algorithm is
+// FNV-1a 64-bit serialised as 16 hex chars — we only need stability
+// across processes reading the same file, not cryptographic
+// resistance.
+[[nodiscard]] std::string config_file_hash(const std::filesystem::path& path);
+
 } // namespace acva::config

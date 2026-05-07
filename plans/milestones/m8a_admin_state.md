@@ -270,7 +270,91 @@ since M1 but has accumulated facts (M5 stretch) + summaries (M1 part
 A) + interruption metadata (M7). Building the CLI before that surface
 settled would have meant rewriting it on every milestone.
 
-## Step 4 — Watchdog + checkpointed restart
+## Step 4 — Watchdog + checkpointed restart — ✅ landed 2026-05-07
+
+Shipped:
+- `runtime_state` table — new singleton with `id PRIMARY KEY CHECK(id=1)`,
+  cascade-tied to sessions, holds `session_id`, `active_turn_id`,
+  `fsm_state`, `last_partial`, `config_hash`, `checkpoint_at`. Mirrors
+  the plan's schema verbatim.
+- `Repository::upsert_runtime_state` (idempotent INSERT…ON CONFLICT(id)
+  DO UPDATE), `read_runtime_state`, `clear_runtime_state`.
+- `memory::checkpoint_runtime_sync(db_path, row)` — free function that
+  opens its own short-lived Database connection on the calling thread
+  for the pre-execv path, when the orchestrator's MemoryThread has
+  already been torn down.
+- `cfg.supervisor.{stuck_threshold_seconds=90, auto_restart_on_stuck=false,
+  checkpoint_max_age_seconds=60}` — opt-in automation, conservative
+  defaults.
+- `voice_stuck_total{state}` counter on `/metrics`.
+- `src/supervisor/watchdog.{hpp,cpp}` — passive observer. One
+  `subscribe_all` covers LlmToken / TtsAudioChunk / SpeechStarted /
+  FinalTranscript; periodic check thread (500 ms cadence, configurable)
+  compares `now - last_activity` against the threshold while the FSM
+  is in {Transcribing, Thinking, Speaking, Interrupted}; fires once
+  per state-episode (`fired_state_` latch), increments the metric,
+  emits a structured `stuck` log line, and optionally invokes a
+  registered RestartFn.
+- `SessionManager::adopt(SessionId)` — sets the current id without
+  inserting a new row, validates via `repo.get_session`, notifies
+  subscribers. Errors propagate so callers can fall back to
+  `open_initial`.
+- `acva::config::config_file_hash(path)` — FNV-1a 64-bit over the
+  config file bytes (not cryptographic; just a stable "did the file
+  change?" gate). Empty path / unreadable file returns "".
+- main.cpp warm-restart driver:
+  - `request_restart()` closure with 5 s debounce against repeat
+    requests, shared by `POST /restart` and the watchdog auto-restart
+    callback.
+  - Resume gate: on startup, reads `runtime_state`. If
+    `(now - checkpoint_at) <= cfg.supervisor.checkpoint_max_age_seconds`
+    AND `config_hash` matches, calls `sessions.adopt(...)` instead of
+    `open_initial()` and clears the row. Hash mismatch / stale row /
+    adopt failure → log + clear + cold open.
+  - Main loop drains `restart_requested`, snapshots the FSM, runs the
+    same shutdown sequence as SIGINT (capture/stt/dialogue/tts/
+    watchdog/supervisor/fsm/control stop), tears down MemoryThread,
+    writes the checkpoint via `checkpoint_runtime_sync`, then
+    `execv(argv[0], argv)`.
+- ControlServer: new `RestartHandler` slot, `POST /restart`. Empty
+  optional → 202 + `{"status":"accepted",...}`; non-empty → 409 with
+  the reason JSON-escaped; missing handler → 503.
+- `acva memory restart [--host HOST] [--port N]` — CLI subcommand
+  POSTs to a running orchestrator's `/restart`. Reports 202 success,
+  surfaces 409 / 5xx / no-response failures with helpful messages.
+- Tests:
+  - `tests/test_repository.cpp` — runtime_state upsert/read/clear
+    singleton round trip, idempotent overwrite, `checkpoint_runtime_sync`
+    via fresh connection.
+  - `tests/test_session_manager.cpp` — `adopt` happy path
+    (subscribers notified, current id set) and missing-id error.
+  - `tests/test_watchdog.cpp` — fires once when inactive past
+    threshold in Thinking; quiet states (Listening) never fire;
+    auto_restart_on_stuck invokes the registered closure with the
+    state name as reason; zero threshold disables.
+  - Full unit suite: **340 cases** (was 332), all green.
+- Smoke: `acva memory restart --host 127.0.0.1 --port 9999` against an
+  unreachable port surfaces "no response from … (is acva running?)"
+  with exit code 2; existing `acva demo reload` and `acva demo wipe`
+  still pass green after the ControlServer signature changes.
+
+Known v1 limitations:
+- `last_partial` field is persisted as `null` today — the resume path
+  doesn't replay PartialTranscript yet. Warm restart preserves session
+  continuity (same `session_id`, prior turns visible to the LLM) but
+  not in-flight transcript state. The plan's "Fsm::resume_at(state)"
+  + partial-replay step is deferred; FSM starts fresh in Listening
+  after exec.
+- The watchdog's per-state thresholds collapse to one global
+  `stuck_threshold_seconds`. Refinement (tighter window for Thinking
+  vs Interrupted) is a one-config-section change when a real workload
+  motivates it.
+- No cap on consecutive auto-restarts within a sliding window — the
+  5 s debounce alone bounds the rate. A persistent stuck condition
+  with `auto_restart_on_stuck=true` would loop until the operator
+  intervenes; off-by-default mitigates this.
+
+## Step 4 — Watchdog + checkpointed restart (original spec)
 
 A pair of mechanisms that close the loop on "the orchestrator is
 stuck and I need to bounce it without losing the conversation":

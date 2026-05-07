@@ -56,6 +56,22 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at  INTEGER NOT NULL
 );
 
+-- M8A Step 4 — singleton runtime checkpoint. Written synchronously
+-- by `Repository::checkpoint_runtime_sync` before a graceful
+-- /restart exec(); read on startup by the recovery sweep to decide
+-- between "warm resume" and "cold open". The CHECK(id=1) constraint
+-- guarantees a single-row table; an INSERT...ON CONFLICT(id) DO
+-- UPDATE replaces in place.
+CREATE TABLE IF NOT EXISTS runtime_state (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),
+    session_id      INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    active_turn_id  INTEGER,
+    fsm_state       TEXT NOT NULL,
+    last_partial    TEXT,
+    config_hash     TEXT,
+    checkpoint_at   INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_turns_session     ON turns(session_id, id);
 CREATE INDEX IF NOT EXISTS idx_summaries_session ON summaries(session_id, range_end_turn);
 CREATE INDEX IF NOT EXISTS idx_facts_key         ON facts(key);

@@ -1,6 +1,7 @@
 #include "cli/args.hpp"
 #include "cli/memory_cli.hpp"
 #include "config/config.hpp"
+#include "config/paths.hpp"
 #include "config/reload.hpp"
 #include "demos/demo.hpp"
 #include "dialogue/fsm.hpp"
@@ -27,6 +28,7 @@
 #include "audio/pipeline.hpp"
 #include "stt/openai_stt_client.hpp"
 #include "supervisor/supervisor.hpp"
+#include "supervisor/watchdog.hpp"
 
 #include <fmt/format.h>
 #include <unistd.h>
@@ -69,6 +71,7 @@ int main(int argc, char** argv) {
     auto& bundle      = std::get<acva::orchestrator::LoadedConfig>(loaded);
     auto& cfg         = bundle.cfg;
     const auto config_path = bundle.config_path;
+    const auto config_hash = acva::config::config_file_hash(config_path);
 
     // ----- 2. Initialize logging + ALSA sidestep -----
     acva::log::init(cfg.logging);
@@ -264,6 +267,27 @@ int main(int argc, char** argv) {
         return reloader.reload();
     };
 
+    // M8A Step 4 — warm restart request flag + debounce. The
+    // /restart handler (and the watchdog's auto_restart_on_stuck path)
+    // call request_restart() to flip a flag that the main loop drains.
+    // request_restart returns nullopt (accepted) or a reason string
+    // (rejected). 5 s debounce prevents a flapping watchdog from
+    // entering an exec loop.
+    std::atomic<bool> restart_requested{false};
+    std::atomic<std::int64_t> last_restart_request_ms{0};
+    auto request_restart = [&restart_requested,
+                             &last_restart_request_ms]() -> std::optional<std::string> {
+        const auto now = acva::memory::now_ms();
+        const auto last = last_restart_request_ms.load(std::memory_order_acquire);
+        if (last != 0 && (now - last) < 5000) {
+            return fmt::format("debounced; previous request {} ms ago", now - last);
+        }
+        last_restart_request_ms.store(now, std::memory_order_release);
+        restart_requested.store(true, std::memory_order_release);
+        acva::log::info("main", "restart requested");
+        return std::nullopt;
+    };
+
     // M8A Step 2 — privacy handlers. The mute closure captures the
     // capture-stack unique_ptr by reference because capture is built
     // BELOW; until then the pointer is null and POST /mute returns
@@ -304,7 +328,7 @@ int main(int argc, char** argv) {
         control = std::make_unique<acva::http::ControlServer>(
             cfg.control, registry, &fsm,
             acva::orchestrator::make_status_extra(supervisor, capture),
-            run_reload, std::move(privacy));
+            run_reload, std::move(privacy), request_restart);
     } catch (const std::exception& ex) {
         acva::log::error("main", fmt::format("control server failed to start: {}", ex.what()));
         supervisor.stop();
@@ -398,17 +422,92 @@ int main(int argc, char** argv) {
     // call fans out the first session id to all three before traffic flows.
     // Skipped when the LLM stack is disabled (synthetic-only fake-driver
     // runs don't write to memory).
+    //
+    // M8A Step 4 — warm restart. Before opening a fresh session, check
+    // for a recent runtime_state checkpoint. If the row's age + config
+    // hash both match, we adopt the prior session id instead of
+    // inserting a new one; otherwise we clear the row and fall through
+    // to open_initial. The checkpoint is consumed (cleared) on
+    // successful adopt so a subsequent crash-before-checkpoint doesn't
+    // re-adopt the same row.
     if (dialogue->has_llm()) {
-        auto sid_or = sessions.open_initial();
-        if (auto* err = std::get_if<acva::memory::DbError>(&sid_or)) {
-            acva::log::error("main",
-                fmt::format("session open failed: {}", err->message));
-            dialogue->stop();
-            fsm.stop();
-            bus.shutdown();
-            return EXIT_FAILURE;
+        const auto& cfg_hash = config_hash;
+        auto rt_or = memory->read([](acva::memory::Repository& repo) {
+            return repo.read_runtime_state();
+        });
+
+        bool adopted = false;
+        if (auto* row_opt = std::get_if<std::optional<acva::memory::RuntimeStateRow>>(&rt_or);
+            row_opt && row_opt->has_value()) {
+            const auto& row = **row_opt;
+            const auto age_ms = acva::memory::now_ms() - row.checkpoint_at;
+            const std::int64_t max_age_ms =
+                static_cast<std::int64_t>(cfg.supervisor.checkpoint_max_age_seconds) * 1000;
+            const bool fresh = age_ms >= 0 && age_ms <= max_age_ms;
+            const bool hash_ok = !cfg_hash.empty()
+                              && row.config_hash.has_value()
+                              && *row.config_hash == cfg_hash;
+            if (fresh && hash_ok) {
+                auto adopt_or = sessions.adopt(row.session_id);
+                if (std::holds_alternative<acva::memory::SessionId>(adopt_or)) {
+                    acva::log::event("main", "warm_restart_adopted",
+                        acva::event::kNoTurn,
+                        {{"session_id", std::to_string(row.session_id)},
+                         {"age_ms", std::to_string(age_ms)},
+                         {"fsm_state_at_checkpoint", row.fsm_state}});
+                    adopted = true;
+                } else {
+                    acva::log::warn("main", fmt::format(
+                        "warm restart: adopt failed: {}",
+                        std::get<acva::memory::DbError>(adopt_or).message));
+                }
+            } else {
+                acva::log::info("main", fmt::format(
+                    "warm restart: discarding checkpoint "
+                    "(fresh={}, hash_ok={}, age_ms={})",
+                    fresh, hash_ok, age_ms));
+            }
+            // Whether we adopted or not, clear the row — a stale row
+            // shouldn't survive into another startup, and an adopted
+            // row has done its job.
+            (void)memory->read([](acva::memory::Repository& repo) {
+                return repo.clear_runtime_state();
+            });
+        }
+
+        if (!adopted) {
+            auto sid_or = sessions.open_initial();
+            if (auto* err = std::get_if<acva::memory::DbError>(&sid_or)) {
+                acva::log::error("main",
+                    fmt::format("session open failed: {}", err->message));
+                dialogue->stop();
+                fsm.stop();
+                bus.shutdown();
+                return EXIT_FAILURE;
+            }
         }
     }
+
+    // M8A Step 4 — passive watchdog. Subscribes to LlmToken,
+    // TtsAudioChunk, SpeechStarted, FinalTranscript; on prolonged
+    // inactivity in a noisy FSM state (Transcribing / Thinking /
+    // Speaking / Interrupted) emits voice_stuck_total + a structured
+    // log line, and optionally requests a warm restart. Constructed
+    // here (after the bus + fsm exist, before the main loop) so it
+    // observes traffic for the whole run.
+    acva::supervisor::Watchdog watchdog(cfg.supervisor, bus, fsm, registry);
+    watchdog.set_restart_fn([&request_restart](const char* reason) {
+        const auto reject = request_restart();
+        if (reject.has_value()) {
+            acva::log::warn("watchdog", fmt::format(
+                "auto-restart rejected: {} (reason={})",
+                *reject, reason));
+        } else {
+            acva::log::warn("watchdog", fmt::format(
+                "auto-restart requested (reason={})", reason));
+        }
+    });
+    watchdog.start();
 
     // M7 — wire BargeInDetector → PlaybackEngine and start it. The
     // detector's on_fired callback runs on its bus subscription
@@ -479,7 +578,15 @@ int main(int argc, char** argv) {
     }
 
     // ----- 4. Main loop -----
+    bool warm_restart_requested = false;
     while (acva::cli::signal_received() == 0) {
+        // M8A Step 4 — warm restart. Drained on the main thread so
+        // shutdown ordering against capture / dialogue / tts owners
+        // (all locals here) is straightforward.
+        if (restart_requested.load(std::memory_order_acquire)) {
+            warm_restart_requested = true;
+            break;
+        }
         // SIGHUP-driven reload: the signal handler set the flag from
         // an async-signal context; we drain it here on the main loop
         // thread so reloader.reload() runs in a sane state.
@@ -508,7 +615,16 @@ int main(int argc, char** argv) {
     }
 
     int sig = acva::cli::signal_received();
-    acva::log::info("main", fmt::format("received signal {}, shutting down", sig));
+    if (warm_restart_requested) {
+        acva::log::info("main", "warm restart requested, capturing checkpoint");
+    } else {
+        acva::log::info("main", fmt::format("received signal {}, shutting down", sig));
+    }
+
+    // M8A Step 4 — snapshot the FSM BEFORE we stop it so the
+    // checkpoint reflects the in-flight state, not the post-stop one.
+    // For non-restart shutdowns this snapshot is unused.
+    const auto fsm_snapshot_before_stop = fsm.snapshot();
 
     // Wake the stdin reader if it's still in getline().
     if (stdin_reader.joinable()) {
@@ -526,9 +642,60 @@ int main(int argc, char** argv) {
     if (tts)      tts->stop();
     bi_metrics_stop.store(true, std::memory_order_release);
     if (bi_metrics_thread.joinable()) bi_metrics_thread.join();
+    watchdog.stop();
     supervisor.stop();
     fsm.stop();
     control.reset();
+
+    // M8A Step 4 — write the runtime checkpoint AFTER all producers
+    // are quiesced and BEFORE the memory thread closes; we use a
+    // fresh DB connection (`checkpoint_runtime_sync`) so this works
+    // even if memory.reset() has already torn down the orchestrator's
+    // own connection. SQLite WAL allows the second connection.
+    if (warm_restart_requested) {
+        acva::memory::RuntimeStateRow row{
+            .session_id     = sessions.id(),
+            .active_turn_id = (fsm_snapshot_before_stop.active_turn != acva::event::kNoTurn
+                                  ? std::optional<std::int64_t>{
+                                        fsm_snapshot_before_stop.active_turn}
+                                  : std::nullopt),
+            .fsm_state      = std::string(
+                acva::dialogue::to_string(fsm_snapshot_before_stop.state)),
+            .last_partial   = std::nullopt,
+            .config_hash    = config_hash.empty()
+                                  ? std::optional<std::string>{}
+                                  : std::optional<std::string>{config_hash},
+            .checkpoint_at  = acva::memory::now_ms(),
+        };
+        // Drain + close the orchestrator's MemoryThread before we
+        // open a second connection. SQLite WAL would tolerate the
+        // overlap, but closing first keeps the on-disk state
+        // unambiguous for post-mortems.
+        memory.reset();
+
+        if (auto err = acva::memory::checkpoint_runtime_sync(
+                cfg.memory.db_path, row); err.has_value()) {
+            acva::log::error("main", fmt::format(
+                "warm restart: checkpoint failed: {}; aborting exec — "
+                "next start will fall back to cold recovery",
+                err->message));
+            bus.shutdown();
+            return EXIT_FAILURE;
+        }
+        acva::log::event("main", "warm_restart_checkpoint",
+            acva::event::kNoTurn,
+            {{"session_id", std::to_string(row.session_id)},
+             {"fsm_state",  row.fsm_state}});
+        bus.shutdown();
+
+        // execv replaces this process. argv stays valid because main()
+        // is still on the stack — no return past this call. On execv
+        // failure we surface the error and exit; an external supervisor
+        // (systemd) can choose to restart cold.
+        ::execv(argv[0], argv);
+        std::perror("execv");
+        return EXIT_FAILURE;
+    }
     bus.shutdown();
     // VramMonitor stops in its destructor when main returns.
 

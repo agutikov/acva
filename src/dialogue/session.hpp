@@ -56,6 +56,14 @@ public:
     // row. Notifies every registered subscriber with the new id.
     [[nodiscard]] memory::Result<memory::SessionId> open_initial();
 
+    // M8A Step 4 — warm restart. Adopts an existing session id (no
+    // new row inserted) and notifies subscribers. The id MUST come
+    // from a previously-opened session — this method validates by
+    // calling repo.get_session, returning DbError if the row is
+    // missing so the caller can fall back to open_initial.
+    [[nodiscard]] memory::Result<memory::SessionId>
+        adopt(memory::SessionId session_id);
+
     // Close the current session (sets ended_at) and open a new one.
     // Notifies subscribers with the new id. If no current session
     // exists, equivalent to open_initial.

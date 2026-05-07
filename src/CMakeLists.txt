@@ -77,6 +77,7 @@ add_library(acva_core STATIC
     supervisor/probe.cpp
     supervisor/service.cpp
     supervisor/supervisor.cpp
+    supervisor/watchdog.cpp
     tts/openai_tts_client.cpp
 )
 

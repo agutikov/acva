@@ -67,6 +67,27 @@ memory::Result<memory::SessionId> SessionManager::open_initial() {
     return sid;
 }
 
+memory::Result<memory::SessionId>
+SessionManager::adopt(memory::SessionId session_id) {
+    std::lock_guard lk(op_mtx_);
+    auto found = memory_->read([session_id](memory::Repository& repo) {
+        return repo.get_session(session_id);
+    });
+    if (auto* err = std::get_if<memory::DbError>(&found)) {
+        return *err;
+    }
+    auto& opt = std::get<std::optional<memory::SessionRow>>(found);
+    if (!opt.has_value()) {
+        return memory::DbError{
+            fmt::format("adopt: session id {} not found", session_id)};
+    }
+    current_.store(session_id, std::memory_order_release);
+    log::event("session", "session_adopted", event::kNoTurn,
+               {{"session_id", std::to_string(session_id)}});
+    notify_subscribers_locked(session_id);
+    return session_id;
+}
+
 memory::Result<memory::SessionId> SessionManager::roll_over() {
     std::lock_guard lk(op_mtx_);
     const auto prev = current_.load(std::memory_order_acquire);

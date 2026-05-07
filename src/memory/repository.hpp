@@ -60,6 +60,19 @@ struct SummaryRow {
     UnixMs created_at = 0;
 };
 
+// M8A Step 4 — singleton runtime checkpoint row. Persisted via
+// `Repository::upsert_runtime_state` (idempotent overwrite — there's
+// only ever one row, with id=1) and consulted on startup to decide
+// "warm resume" vs "cold open".
+struct RuntimeStateRow {
+    SessionId session_id = 0;
+    std::optional<TurnId> active_turn_id;
+    std::string fsm_state;
+    std::optional<std::string> last_partial;
+    std::optional<std::string> config_hash;
+    UnixMs checkpoint_at = 0;
+};
+
 struct FactRow {
     FactId id = 0;
     std::string key;
@@ -123,6 +136,11 @@ public:
     // implicitly via Database::exec.
     [[nodiscard]] std::optional<DbError> vacuum();
 
+    // M8A Step 4 — runtime checkpoint singleton.
+    [[nodiscard]] std::optional<DbError> upsert_runtime_state(const RuntimeStateRow& row);
+    [[nodiscard]] Result<std::optional<RuntimeStateRow>> read_runtime_state();
+    [[nodiscard]] std::optional<DbError> clear_runtime_state();
+
     // ----- turns -----
     [[nodiscard]] Result<TurnId> insert_turn(SessionId session, TurnRole role,
                                               std::optional<std::string> text,
@@ -165,5 +183,17 @@ public:
 private:
     Database& db_;
 };
+
+// M8A Step 4 — pre-execv checkpoint. Opens a fresh, short-lived
+// Database connection (no MemoryThread), upserts the runtime_state
+// row, and commits before returning. Used inside the /restart
+// handler immediately before the process replaces itself with
+// `execv` — by then the orchestrator's own MemoryThread has been
+// stopped, so we can't go through it. Returns DbError on open or
+// write failure; the caller should NOT execv on failure (the
+// session would be lost without its checkpoint anchor).
+[[nodiscard]] std::optional<DbError>
+checkpoint_runtime_sync(const std::filesystem::path& db_path,
+                         const RuntimeStateRow& row);
 
 } // namespace acva::memory

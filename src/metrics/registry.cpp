@@ -232,6 +232,13 @@ Registry::Registry() : registry_(std::make_shared<prometheus::Registry>()) {
     barge_in_suppressed_metric_          = &barge_in_suppressed_->Add({{"cause", "any"}});
     barge_in_suppressed_cooldown_metric_ = &barge_in_suppressed_->Add({{"cause", "cooldown"}});
     barge_in_suppressed_aec_metric_      = &barge_in_suppressed_->Add({{"cause", "aec"}});
+
+    // M8A Step 4 — watchdog stuck-fire counter, labelled by FSM state.
+    stuck_total_ = &prometheus::BuildCounter()
+        .Name("voice_stuck_total")
+        .Help("Watchdog stuck-detection events, labelled by the FSM state "
+              "at the moment the threshold was crossed")
+        .Register(*registry_);
 }
 
 void Registry::on_event_published(const char* event_name) {
@@ -248,6 +255,10 @@ void Registry::on_queue_drop(const std::string& queue_name) {
 
 void Registry::on_service_restart(const std::string& service_name) {
     service_restarts_->Add({{"service", service_name}}).Increment();
+}
+
+void Registry::on_stuck(const char* fsm_state) {
+    if (stuck_total_) stuck_total_->Add({{"state", fsm_state}}).Increment();
 }
 
 void Registry::set_fsm_state(const char* state_name) {

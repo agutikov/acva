@@ -301,3 +301,73 @@ TEST_CASE("repo: vacuum is a no-op success on a healthy DB") {
     (void)repo.insert_session(mem::now_ms(), std::nullopt);
     CHECK_FALSE(repo.vacuum().has_value());
 }
+
+TEST_CASE("repo: runtime_state upsert/read/clear singleton") {
+    auto p = tmp_db("runtime-state");
+    auto db = open_or_die(p);
+    mem::Repository repo(db);
+
+    auto sid = std::get<mem::SessionId>(repo.insert_session(mem::now_ms(), std::nullopt));
+
+    auto initial = repo.read_runtime_state();
+    REQUIRE(std::holds_alternative<std::optional<mem::RuntimeStateRow>>(initial));
+    CHECK_FALSE(std::get<std::optional<mem::RuntimeStateRow>>(initial).has_value());
+
+    mem::RuntimeStateRow row{
+        .session_id     = sid,
+        .active_turn_id = std::optional<mem::TurnId>{42},
+        .fsm_state      = "thinking",
+        .last_partial   = std::optional<std::string>{"partial..."},
+        .config_hash    = std::optional<std::string>{"deadbeef"},
+        .checkpoint_at  = 1700000000000,
+    };
+    CHECK_FALSE(repo.upsert_runtime_state(row).has_value());
+
+    auto got = repo.read_runtime_state();
+    REQUIRE(std::holds_alternative<std::optional<mem::RuntimeStateRow>>(got));
+    REQUIRE(std::get<std::optional<mem::RuntimeStateRow>>(got).has_value());
+    const auto& r = *std::get<std::optional<mem::RuntimeStateRow>>(got);
+    CHECK(r.session_id == sid);
+    CHECK(r.fsm_state == "thinking");
+    CHECK(r.config_hash == "deadbeef");
+    CHECK(r.checkpoint_at == 1700000000000);
+
+    // Idempotent overwrite — second upsert with different fields wins.
+    mem::RuntimeStateRow row2 = row;
+    row2.fsm_state = "speaking";
+    row2.active_turn_id = std::optional<mem::TurnId>{43};
+    CHECK_FALSE(repo.upsert_runtime_state(row2).has_value());
+    got = repo.read_runtime_state();
+    CHECK(std::get<std::optional<mem::RuntimeStateRow>>(got)->fsm_state == "speaking");
+    CHECK(*std::get<std::optional<mem::RuntimeStateRow>>(got)->active_turn_id == 43);
+
+    // Clear → empty again.
+    CHECK_FALSE(repo.clear_runtime_state().has_value());
+    got = repo.read_runtime_state();
+    CHECK_FALSE(std::get<std::optional<mem::RuntimeStateRow>>(got).has_value());
+}
+
+TEST_CASE("repo: checkpoint_runtime_sync writes via fresh connection") {
+    auto p = tmp_db("checkpoint-sync");
+    auto db = open_or_die(p);
+    mem::Repository repo(db);
+
+    auto sid = std::get<mem::SessionId>(repo.insert_session(mem::now_ms(), std::nullopt));
+
+    mem::RuntimeStateRow row{
+        .session_id     = sid,
+        .active_turn_id = std::nullopt,
+        .fsm_state      = "speaking",
+        .last_partial   = std::nullopt,
+        .config_hash    = std::optional<std::string>{"abcd"},
+        .checkpoint_at  = mem::now_ms(),
+    };
+    // The static helper opens its own connection. SQLite WAL allows
+    // it to coexist with the test's `db` handle.
+    CHECK_FALSE(mem::checkpoint_runtime_sync(p, row).has_value());
+
+    auto got = repo.read_runtime_state();
+    REQUIRE(std::holds_alternative<std::optional<mem::RuntimeStateRow>>(got));
+    REQUIRE(std::get<std::optional<mem::RuntimeStateRow>>(got).has_value());
+    CHECK(std::get<std::optional<mem::RuntimeStateRow>>(got)->fsm_state == "speaking");
+}

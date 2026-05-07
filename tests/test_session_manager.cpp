@@ -155,6 +155,39 @@ TEST_CASE("SessionManager: wipe_session(current) rolls over") {
     CHECK(count_sessions(*memory) == 1);
 }
 
+TEST_CASE("SessionManager: adopt picks up an existing id and notifies subscribers") {
+    auto path = tmp_db("adopt");
+    auto memory = open_or_die(path);
+    dlg::SessionManager sm(*memory);
+
+    // Pre-create a session row directly so adopt has a target.
+    auto sid = memory->read([](mem::Repository& repo) {
+        return repo.insert_session(mem::now_ms(), std::nullopt);
+    });
+    REQUIRE(std::holds_alternative<mem::SessionId>(sid));
+    const auto target = std::get<mem::SessionId>(sid);
+
+    std::atomic<mem::SessionId> seen{0};
+    sm.register_subscriber("test", [&](mem::SessionId v) {
+        seen.store(v, std::memory_order_relaxed);
+    });
+
+    auto adopt_or = sm.adopt(target);
+    REQUIRE(std::holds_alternative<mem::SessionId>(adopt_or));
+    CHECK(sm.id() == target);
+    CHECK(seen.load() == target);
+}
+
+TEST_CASE("SessionManager: adopt fails when the id is missing") {
+    auto path = tmp_db("adopt-missing");
+    auto memory = open_or_die(path);
+    dlg::SessionManager sm(*memory);
+
+    auto adopt_or = sm.adopt(99999);
+    REQUIRE(std::holds_alternative<mem::DbError>(adopt_or));
+    CHECK(sm.id() == 0);
+}
+
 TEST_CASE("SessionManager: wipe_all clears DB and opens fresh session") {
     auto path = tmp_db("wipe-all");
     auto memory = open_or_die(path);

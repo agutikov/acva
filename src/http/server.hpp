@@ -41,6 +41,13 @@ public:
     // serialisation).
     using ReloadHandler = std::function<config::ReloadResult()>;
 
+    // M8A Step 4 — POST /restart handler. Empty optional = accepted
+    // (server returns 202 and the request connection drops as the
+    // orchestrator exec's a fresh process). Non-empty optional = the
+    // restart was rejected (e.g. debounced because a previous request
+    // is still in-flight); the string is surfaced as a 409 message.
+    using RestartHandler = std::function<std::optional<std::string>()>;
+
     // M8A Step 2 — privacy command handlers. Each closure converts
     // its underlying component (AudioPipeline mute flag, SessionManager
     // operations) into a flat shape so the server header stays free
@@ -65,7 +72,8 @@ public:
                   const dialogue::Fsm* fsm,
                   StatusExtra status_extra = {},
                   ReloadHandler reload_handler = {},
-                  PrivacyHandlers privacy = {});
+                  PrivacyHandlers privacy = {},
+                  RestartHandler restart_handler = {});
     ~ControlServer();
 
     ControlServer(const ControlServer&) = delete;
@@ -83,6 +91,7 @@ private:
     StatusExtra status_extra_;
     ReloadHandler reload_handler_;
     PrivacyHandlers privacy_;
+    RestartHandler restart_handler_;
     std::unique_ptr<Impl> impl_;
     int bound_port_ = 0;
 };

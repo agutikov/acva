@@ -1,6 +1,8 @@
 #include "config/paths.hpp"
 
 #include <array>
+#include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
@@ -100,6 +102,30 @@ resolve_config_path(std::string_view cli) {
     }
     msg += " — pass --config PATH or place a default.yaml in one of those locations";
     return LoadError{std::move(msg)};
+}
+
+std::string config_file_hash(const std::filesystem::path& path) {
+    if (path.empty()) return {};
+    std::FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return {};
+    // FNV-1a 64-bit. Stable across processes reading the same bytes;
+    // not cryptographic, but we only use it as a "did this file
+    // change?" gate for resume.
+    std::uint64_t h = 0xcbf29ce484222325ULL;
+    constexpr std::uint64_t kPrime = 0x100000001b3ULL;
+    unsigned char buf[4096];
+    std::size_t n = 0;
+    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) {
+        for (std::size_t i = 0; i < n; ++i) {
+            h ^= static_cast<std::uint64_t>(buf[i]);
+            h *= kPrime;
+        }
+    }
+    std::fclose(f);
+    char out[17];
+    std::snprintf(out, sizeof(out), "%016llx",
+                   static_cast<unsigned long long>(h));
+    return out;
 }
 
 } // namespace acva::config

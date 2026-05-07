@@ -223,6 +223,26 @@ struct SupervisorConfig {
     uint32_t pipeline_fail_grace_seconds = 30;
     // Per-probe HTTP timeout. Applied uniformly across services.
     uint32_t probe_timeout_ms = 3000;
+    // M8A Step 4 — watchdog. Threshold (seconds) past which the
+    // orchestrator is considered "stuck" — measured against the most
+    // recent activity event for the current FSM state (LlmToken while
+    // Thinking, TtsAudioChunk while Speaking, transitions while
+    // Listening). Conservative default of 90 s leaves room for slow
+    // LLM completions on the dev box without false-firing.
+    uint32_t stuck_threshold_seconds = 90;
+    // When true, the watchdog calls the registered restart closure on
+    // first stuck-fire (debounced by 5 s on /restart's side). Off by
+    // default — the watchdog logs + increments voice_stuck_total but
+    // doesn't take action. Operators opt into automation explicitly.
+    bool auto_restart_on_stuck = false;
+    // Window (seconds) during which a runtime_state row is considered
+    // "warm" for resume on the next startup. Past this, the orchestrator
+    // discards the checkpoint and falls back to the M1 cold-recovery
+    // path (mark in-progress turns interrupted, open new session).
+    // 60 s comfortably covers a clean /restart roundtrip; longer windows
+    // start to risk reviving stale conversation context the user
+    // expected to be gone.
+    uint32_t checkpoint_max_age_seconds = 60;
 };
 
 struct MemorySummaryConfig {
