@@ -2,6 +2,7 @@
 
 #include "config/paths.hpp"
 #include "log/log.hpp"
+#include "observability/speaches_wedge.hpp"
 
 #include <fmt/format.h>
 #include <unistd.h>
@@ -84,12 +85,16 @@ void install_alsa_sidestep(const config::AudioConfig& audio) {
         "PortAudio probe restricted to default → pulse)", tmpl));
 }
 
-VramMonitor::VramMonitor(const config::LoggingConfig& logging) {
+VramMonitor::VramMonitor(const config::LoggingConfig& logging,
+                          const config::SupervisorConfig& supervisor_cfg,
+                          std::shared_ptr<metrics::Registry> registry) {
     if (logging.vram_monitor_interval_ms == 0) return;
 
     thread_ = std::thread([this,
-                            interval_ms = logging.vram_monitor_interval_ms,
-                            threshold_mib = logging.vram_low_threshold_mib]{
+                            interval_ms        = logging.vram_monitor_interval_ms,
+                            threshold_mib      = logging.vram_low_threshold_mib,
+                            wedge_threshold    = supervisor_cfg.speaches_wedge_threshold_mib,
+                            registry           = std::move(registry)] {
         const auto interval = std::chrono::milliseconds(interval_ms);
         const auto probe = []() -> std::pair<long, long> {
             FILE* p = ::popen(
@@ -114,7 +119,8 @@ VramMonitor::VramMonitor(const config::LoggingConfig& logging) {
         // low → healthy, so a steady-state run is silent. If the
         // first probe is already low, that counts as a transition
         // and we emit once.
-        bool low = false;
+        bool low    = false;
+        bool wedged = false;
         while (!stop_.load(std::memory_order_acquire)) {
             const auto v = probe();
             if (v.first >= 0) {
@@ -134,16 +140,61 @@ VramMonitor::VramMonitor(const config::LoggingConfig& logging) {
                     low = false;
                 }
             }
+
+            // M8B Step 1 — Speaches CUDA-OOM wedge detection. Sample
+            // per-process VRAM, identify the speaches process via
+            // /proc/<pid>/cmdline, classify against the threshold,
+            // and push the metrics + state snapshot.
+            const auto raw_apps = observability::run_nvidia_smi_compute_apps();
+            const auto apps     = observability::parse_compute_apps(raw_apps);
+            const auto probe_result = observability::classify_speaches(
+                apps, &observability::read_proc_cmdline,
+                static_cast<long>(wedge_threshold));
+
+            if (registry) {
+                registry->set_speaches_vram_used_mib(
+                    static_cast<double>(probe_result.used_mib));
+                registry->set_speaches_wedged(probe_result.wedged);
+            }
+            {
+                std::lock_guard lk(wedge_mu_);
+                wedge_.known         = true;
+                wedge_.pid           = probe_result.pid;
+                wedge_.used_mib      = probe_result.used_mib;
+                wedge_.wedged        = probe_result.wedged;
+                wedge_.threshold_mib = static_cast<std::int64_t>(wedge_threshold);
+            }
+            if (probe_result.wedged && !wedged) {
+                log::event("vram", "speaches_wedged", event::kNoTurn,
+                    {{"pid", std::to_string(probe_result.pid)},
+                     {"used_mib", std::to_string(probe_result.used_mib)},
+                     {"threshold_mib", std::to_string(wedge_threshold)}});
+                wedged = true;
+            } else if (!probe_result.wedged && wedged) {
+                log::event("vram", "speaches_recovered", event::kNoTurn,
+                    {{"pid", std::to_string(probe_result.pid)},
+                     {"used_mib", std::to_string(probe_result.used_mib)}});
+                wedged = false;
+            }
+
             std::this_thread::sleep_for(interval);
         }
     });
 }
+
+VramMonitor::VramMonitor(const config::LoggingConfig& logging)
+    : VramMonitor(logging, {}, /*registry*/ nullptr) {}
 
 VramMonitor::~VramMonitor() {
     if (thread_.joinable()) {
         stop_.store(true, std::memory_order_release);
         thread_.join();
     }
+}
+
+SpeachesWedgeState VramMonitor::wedge_state() const {
+    std::lock_guard lk(wedge_mu_);
+    return wedge_;
 }
 
 } // namespace acva::orchestrator

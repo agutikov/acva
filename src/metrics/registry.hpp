@@ -130,6 +130,16 @@ public:
     // (the watchdog itself debounces to avoid spam).
     void on_stuck(const char* fsm_state);
 
+    // M8B Step 1 — Speaches CUDA-OOM wedge detection.
+    //
+    // `voice_speaches_vram_used_mib` — host-side nvidia-smi reading
+    // for the speaches process; 0 when the process can't be located.
+    // `voice_speaches_wedged` — 1 when used_mib has crossed
+    // cfg.supervisor.speaches_wedge_threshold_mib, 0 otherwise. Both
+    // are set by the VramMonitor each tick.
+    void set_speaches_vram_used_mib(double mib);
+    void set_speaches_wedged(bool wedged);
+
     // Subscribe metrics-collection handlers to the bus. Call after
     // construction. Returns subscriptions which the caller must keep alive.
     [[nodiscard]] std::vector<event::SubscriptionHandle> subscribe(event::EventBus& bus);
@@ -201,6 +211,12 @@ private:
 
     // M8A Step 4 — watchdog stuck-fire counter, labelled by FSM state.
     prometheus::Family<prometheus::Counter>*   stuck_total_                     = nullptr;
+
+    // M8B Step 1 — Speaches CUDA-OOM wedge.
+    prometheus::Family<prometheus::Gauge>*     speaches_vram_used_              = nullptr;
+    prometheus::Gauge*                         speaches_vram_used_metric_       = nullptr;
+    prometheus::Family<prometheus::Gauge>*     speaches_wedged_                 = nullptr;
+    prometheus::Gauge*                         speaches_wedged_metric_          = nullptr;
 
     // Per-(turn, seq) TTS timer state, captured between TtsStarted and
     // the first TtsAudioChunk so we can compute first-audio latency.

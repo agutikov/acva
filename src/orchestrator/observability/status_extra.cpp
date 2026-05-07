@@ -12,8 +12,9 @@ namespace acva::orchestrator {
 
 std::function<std::string()>
 make_status_extra(const supervisor::Supervisor& sup,
-                   const std::unique_ptr<CaptureStack>& capture) {
-    return [&sup, &capture]() -> std::string {
+                   const std::unique_ptr<CaptureStack>& capture,
+                   const VramMonitor* vram_monitor) {
+    return [&sup, &capture, vram_monitor]() -> std::string {
         const auto snap = sup.snapshot();
         std::string out = "\"pipeline_state\":\"";
         out.append(supervisor::to_string(snap.pipeline_state));
@@ -39,6 +40,24 @@ make_status_extra(const supervisor::Supervisor& sup,
                 s.last_http_status);
         }
         out.push_back(']');
+
+        // M8B Step 1 — Speaches CUDA-OOM wedge state (when the
+        // VramMonitor is wired in). Operators read /status to see
+        // whether faster-whisper has wedged; the remediation hint
+        // mirrors what the soak driver does automatically.
+        if (vram_monitor != nullptr) {
+            const auto w = vram_monitor->wedge_state();
+            if (w.known) {
+                out += fmt::format(
+                    R"(,"speaches":{{"vram_used_mib":{},"wedged":{},)"
+                    R"("threshold_mib":{},"pid":{})",
+                    w.used_mib, w.wedged, w.threshold_mib, w.pid);
+                if (w.wedged) {
+                    out += R"j(,"remediation":"docker compose -f packaging/compose/docker-compose.yml restart speaches (or `acva memory restart` after the upstream container settles)")j";
+                }
+                out += "}";
+            }
+        }
 
         // M6 — APM block. Present whenever the pipeline is up and an
         // APM stage was constructed (i.e., capture_enabled + a

@@ -152,14 +152,17 @@ int main(int argc, char** argv) {
 
     acva::cli::install_signal_handlers();
 
-    // Production-only periodic VRAM probe. Spawned AFTER the demo
-    // dispatch above — demos do their own VRAM probing and a joinable
-    // thread destructor on demo-return would call std::terminate.
-    acva::orchestrator::VramMonitor vram_monitor(cfg.logging);
-
     // ----- 3. Build the runtime -----
     acva::event::EventBus bus;
     auto registry = std::make_shared<acva::metrics::Registry>();
+
+    // Production-only periodic VRAM probe. Spawned AFTER the demo
+    // dispatch above — demos do their own VRAM probing and a joinable
+    // thread destructor on demo-return would call std::terminate.
+    // Pushes voice_speaches_vram_used_mib + voice_speaches_wedged
+    // each tick (M8B Step 1).
+    acva::orchestrator::VramMonitor vram_monitor(
+        cfg.logging, cfg.supervisor, registry);
     auto metric_subs = registry->subscribe(bus); // keep-alive
 
     // Memory layer: open the database (or create it) and run the recovery
@@ -274,7 +277,7 @@ int main(int argc, char** argv) {
     try {
         control = std::make_unique<acva::http::ControlServer>(
             cfg.control, registry, &fsm,
-            acva::orchestrator::make_status_extra(supervisor, capture),
+            acva::orchestrator::make_status_extra(supervisor, capture, &vram_monitor),
             run_reload, std::move(privacy),
             [&restart_requester]() { return restart_requester.request(); });
     } catch (const std::exception& ex) {

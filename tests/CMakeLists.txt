@@ -66,6 +66,7 @@ add_executable(acva_unit_tests
     test_resampler.cpp
     test_sentence_splitter.cpp
     test_session_manager.cpp
+    test_speaches_wedge_classifier.cpp
     test_tts_bridge.cpp
     test_turn_writer.cpp
     test_utterance.cpp

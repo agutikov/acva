@@ -1,5 +1,6 @@
 #pragma once
 
+#include "orchestrator/boot/bootstrap.hpp"
 #include "orchestrator/stacks/capture_stack.hpp"
 #include "supervisor/supervisor.hpp"
 
@@ -21,6 +22,7 @@ namespace acva::orchestrator {
 // closure is created — that's the production order.
 [[nodiscard]] std::function<std::string()>
 make_status_extra(const supervisor::Supervisor& sup,
-                   const std::unique_ptr<CaptureStack>& capture);
+                   const std::unique_ptr<CaptureStack>& capture,
+                   const VramMonitor* vram_monitor = nullptr);
 
 } // namespace acva::orchestrator

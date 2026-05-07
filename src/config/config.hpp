@@ -270,6 +270,22 @@ struct SupervisorConfig {
     // Independent of `strict_startup` — operators can force-load
     // without strict-exit semantics by leaving `strict_startup=false`.
     bool startup_force_load = false;
+    // M8B Step 1 — Speaches CUDA-OOM wedge detection.
+    //
+    // The wedge symptom: faster-whisper's encoder workspace fails to
+    // allocate, Speaches enters a state where /v1/audio/transcriptions
+    // returns HTTP 500 instantly while VRAM stays held in the CUDA
+    // context. Steady-state turbo+int8 sits at ~1190 MiB; post-wedge it
+    // pegs at ~2600 MiB. The detection metric (set by VramMonitor each
+    // tick) emits voice_speaches_wedged=1 once the speaches process's
+    // VRAM crosses this threshold; the soak driver acts on the metric
+    // by issuing `docker compose restart speaches`.
+    //
+    // The "expected_model_size + 800 MiB CUDA-context budget" rule of
+    // thumb gives ~2000 MiB for turbo+int8 — the default. Operators
+    // running larger STT models (full large-v3 ~2 GiB FP16, plus
+    // context) should bump this to avoid false positives.
+    uint32_t speaches_wedge_threshold_mib = 2000;
 };
 
 struct MemorySummaryConfig {

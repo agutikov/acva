@@ -239,6 +239,23 @@ Registry::Registry() : registry_(std::make_shared<prometheus::Registry>()) {
         .Help("Watchdog stuck-detection events, labelled by the FSM state "
               "at the moment the threshold was crossed")
         .Register(*registry_);
+
+    // M8B Step 1 — Speaches CUDA-OOM wedge detection.
+    speaches_vram_used_ = &prometheus::BuildGauge()
+        .Name("voice_speaches_vram_used_mib")
+        .Help("VRAM (MiB) held by the speaches process, sampled by the "
+              "VramMonitor. 0 when the process can't be located on the host.")
+        .Register(*registry_);
+    speaches_vram_used_metric_ = &speaches_vram_used_->Add({});
+
+    speaches_wedged_ = &prometheus::BuildGauge()
+        .Name("voice_speaches_wedged")
+        .Help("1 when speaches VRAM has crossed "
+              "cfg.supervisor.speaches_wedge_threshold_mib, 0 otherwise. "
+              "The 4-hour soak driver acts on this by issuing "
+              "`docker compose restart speaches`.")
+        .Register(*registry_);
+    speaches_wedged_metric_ = &speaches_wedged_->Add({});
 }
 
 void Registry::on_event_published(const char* event_name) {
@@ -259,6 +276,14 @@ void Registry::on_service_restart(const std::string& service_name) {
 
 void Registry::on_stuck(const char* fsm_state) {
     if (stuck_total_) stuck_total_->Add({{"state", fsm_state}}).Increment();
+}
+
+void Registry::set_speaches_vram_used_mib(double mib) {
+    if (speaches_vram_used_metric_) speaches_vram_used_metric_->Set(mib);
+}
+
+void Registry::set_speaches_wedged(bool wedged) {
+    if (speaches_wedged_metric_) speaches_wedged_metric_->Set(wedged ? 1.0 : 0.0);
 }
 
 void Registry::set_fsm_state(const char* state_name) {

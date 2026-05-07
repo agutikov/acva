@@ -144,7 +144,52 @@ Failure modes:
 | OTLP export contention with critical path | Async + non-blocking; if exporter blocks, drop spans |
 | Dashboard panels regress as metrics get renamed | Pin panel queries to a stable subset; add a CI step that diffs `/metrics` output against a golden list before merge |
 
-## Known issues to address before the 4-hour soak
+## Known issues — Speaches wedge detection ✅ landed 2026-05-07 (item 1 + item 3 partial)
+
+Shipped (items 1 + 3a from the plan below):
+- `cfg.supervisor.speaches_wedge_threshold_mib` (default 2000 — covers
+  turbo+int8 baseline + the ~800 MiB CUDA-context budget).
+- `voice_speaches_vram_used_mib` (gauge, MiB) and
+  `voice_speaches_wedged` (0/1 gauge) published on `/metrics` by the
+  VramMonitor each tick.
+- Pure classifier in `src/observability/speaches_wedge.{hpp,cpp}` —
+  parses `nvidia-smi --query-compute-apps=pid,used_memory` CSV output,
+  resolves PIDs to cmdlines via an injectable `CmdlineLookup`, returns
+  the first match whose cmdline contains "speaches" along with
+  `wedged = (used_mib >= threshold_mib)`. Live monitor wires
+  `popen("nvidia-smi …")` + `read_proc_cmdline(pid)` reading
+  `/proc/<pid>/cmdline` (NUL → space).
+- VramMonitor now takes (LoggingConfig, SupervisorConfig, Registry);
+  pushes the metrics each tick AND maintains a `SpeachesWedgeState`
+  snapshot (PID, used_mib, wedged, threshold_mib) the `/status`
+  closure reads. Edge-triggered `speaches_wedged` /
+  `speaches_recovered` log events on transitions. Convenience ctor
+  `VramMonitor(LoggingConfig)` retained for tests/demos that don't
+  need wedge detection.
+- `/status` adds a `"speaches"` block when the monitor has data:
+  `vram_used_mib`, `wedged`, `threshold_mib`, `pid`. When wedged, a
+  `remediation` string surfaces the manual escape hatch
+  (`docker compose -f packaging/compose/docker-compose.yml restart speaches`).
+- Tests: 9 cases / 26 assertions in
+  `tests/test_speaches_wedge_classifier.cpp` covering CSV parse
+  (whitespace + blanks + malformed lines), classify match / no-match /
+  threshold-inclusive / first-match ordering / non-speaches PID
+  ignored. Full unit suite at **361 cases** (was 352), all green.
+
+Deferred items from the original "Three things M8B owes" list:
+- **Item 2 (Recovery action — soak driver issues `docker compose restart speaches`).**
+  Lives inside the 4-hour soak driver, which is M8B Step 1's bigger
+  follow-up. The `voice_speaches_wedged` metric is now the trigger;
+  the driver acts on it.
+- **Item 3b (`tools/acva-models recover` Python subcommand).** Manual
+  escape hatch for dev sessions that mirrors the soak driver's auto-
+  restart. Bundled with the soak driver work above so the manual +
+  automated paths share logic.
+
+The above two are pure additions on top of the detection metric — no
+further C++ surface changes needed.
+
+## Known issues — full original notes
 
 - **Speaches CUDA-OOM wedge leaves VRAM unrecoverable.** Surfaced 2026-05-04.
   After running `tests/test_speaches_wedge.cpp` (or any sustained

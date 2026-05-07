@@ -59,6 +59,7 @@ add_library(acva_core STATIC
     memory/repository.cpp
     memory/summarizer.cpp
     metrics/registry.cpp
+    observability/speaches_wedge.cpp
     orchestrator/admin/privacy_handlers.cpp
     orchestrator/admin/reload_setup.cpp
     orchestrator/admin/restart_driver.cpp
