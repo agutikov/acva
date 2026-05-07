@@ -23,6 +23,7 @@ int run_health    (const config::Config&, std::span<const std::string>);
 int run_llm       (const config::Config&, std::span<const std::string>);
 int run_loopback  (const config::Config&, std::span<const std::string>);
 int run_reload    (const config::Config&, std::span<const std::string>);
+int run_soak_mini (const config::Config&, std::span<const std::string>);
 int run_stt       (const config::Config&, std::span<const std::string>);
 int run_tone      (const config::Config&, std::span<const std::string>);
 int run_transcribe(const config::Config&, std::span<const std::string>);
@@ -31,7 +32,7 @@ int run_wipe      (const config::Config&, std::span<const std::string>);
 
 namespace {
 
-constexpr std::array<Demo, 19> kDemos{{
+constexpr std::array<Demo, 20> kDemos{{
     {"fsm",      "M0",
      "synthetic FSM driver runs 3 turns end-to-end (no backends needed)",
      run_fsm},
@@ -80,6 +81,9 @@ constexpr std::array<Demo, 19> kDemos{{
     {"soak",     "M6",
      "5-min Speaches TTS+STT throughput + VRAM monitor (silent; for leak detection)",
      run_soak},
+    {"soak-mini","M8B",
+     "60s FakeDriver-only end-to-end mini-soak — RSS growth + p95 first-audio drift",
+     run_soak_mini},
     {"wedge",    "M6",
      "reproduce the Speaches CUDA-OOM wedge (long Russian TTS) and diagnose",
      run_wedge},

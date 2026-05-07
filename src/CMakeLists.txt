@@ -29,6 +29,7 @@ add_library(acva_core STATIC
     demos/loopback.cpp
     demos/reload.cpp
     demos/soak.cpp
+    demos/soak_mini.cpp
     demos/stt.cpp
     demos/tone.cpp
     demos/transcribe.cpp

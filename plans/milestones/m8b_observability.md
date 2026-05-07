@@ -86,7 +86,29 @@ OTLP export uses HTTP (not gRPC) to keep the dependency surface lean. Endpoint d
 
 ## Demo commands (planned)
 
-### `acva demo soak` — 60-second mini-soak
+### `acva demo soak-mini` — ✅ landed 2026-05-07
+
+Shipped a 60-second FakeDriver-only end-to-end mini-soak at
+`src/demos/soak_mini.cpp` (~225 LOC). Reports:
+
+- Per-tick (`t={10,30,60}s` by default; quarter-spaced if `--duration`
+  overrides the 60s default): RSS from `/proc/self/status`, turn count
+  from FSM outcome observer, p95 of LlmStarted→first-TtsAudioChunk
+  latencies. underruns/queue_max are placeholders (`-`) because the
+  FakeDriver-only path doesn't run real playback.
+- Final summary: `rss_growth` (final − warmup-baseline at t=10s),
+  `latency_p95_drift` (% change vs warmup), supervisor_restarts (0 with
+  no real backends).
+- PASS gate: `rss_growth ≤ 50 MiB AND p95_drift ≤ +20% AND turns > 0`.
+- `--duration <s>` and `--warmup <s>` overrides; default 60/10.
+
+Smoke verified: default 60s run produces 7 turns, RSS stable at 18 MiB,
+p95 steady at 602ms (FakeDriver llm_first_token_delay + tts_first_audio
+within timing tolerance), PASS. Full 352-case unit suite still green
+post-add. The demo is a self-contained pre-flight; the full 4-hour
+harness with virtual mic + real backends lands in Step 1 proper below.
+
+### `acva demo soak` — 60-second mini-soak (original spec)
 
 Runs the FakeDriver + (optional) real LLM/TTS for 60 seconds and
 reports the same metrics the 4-hour harness does, but at a tractable
