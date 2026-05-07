@@ -60,7 +60,9 @@ add_library(acva_core STATIC
     memory/repository.cpp
     memory/summarizer.cpp
     metrics/registry.cpp
+    observability/otlp.cpp
     observability/speaches_wedge.cpp
+    observability/turn_span.cpp
     orchestrator/admin/privacy_handlers.cpp
     orchestrator/admin/reload_setup.cpp
     orchestrator/admin/restart_driver.cpp
@@ -135,6 +137,21 @@ endif()
 if(ACVA_HAVE_WEBRTC_APM)
     target_link_libraries(acva_core PRIVATE PkgConfig::webrtc_apm)
     target_compile_definitions(acva_core PRIVATE ACVA_HAVE_WEBRTC_APM=1)
+endif()
+
+# M8B Step 3 — opentelemetry-cpp for OTLP/HTTP traces. Optional;
+# observability/otlp.cpp falls back to stub implementations when
+# the package is missing. The two targets we link cover the
+# tracer SDK + the HTTP/OTLP exporter; everything else
+# (resources, batch processor) chains in transitively.
+if(ACVA_HAVE_OTLP)
+    target_link_libraries(acva_core PRIVATE
+        opentelemetry-cpp::trace
+        opentelemetry-cpp::otlp_http_exporter)
+    # PUBLIC so test TUs that gate on `#ifdef ACVA_HAVE_OTLP` see
+    # the same answer the otlp.cpp build saw — keeps the gated
+    # tests in lockstep with the production build.
+    target_compile_definitions(acva_core PUBLIC ACVA_HAVE_OTLP=1)
 endif()
 
 # Main executable

@@ -14,6 +14,8 @@
 #include "memory/recovery.hpp"
 #include "memory/repository.hpp"
 #include "metrics/registry.hpp"
+#include "observability/otlp.hpp"
+#include "observability/turn_span.hpp"
 #include "orchestrator/observability/barge_in_metrics.hpp"
 #include "orchestrator/boot/bootstrap.hpp"
 #include "orchestrator/stacks/capture_stack.hpp"
@@ -164,6 +166,14 @@ int main(int argc, char** argv) {
     acva::orchestrator::VramMonitor vram_monitor(
         cfg.logging, cfg.supervisor, registry);
     auto metric_subs = registry->subscribe(bus); // keep-alive
+
+    // M8B Step 3 — OTLP/HTTP tracer. Disabled by default; opt in
+    // via cfg.observability.otlp.enabled. Subscriber lives in
+    // metric_subs so it survives until bus.shutdown().
+    acva::observability::Tracer tracer;
+    tracer.init(cfg.observability);
+    metric_subs.push_back(
+        acva::observability::install_turn_span_subscriber(bus, tracer));
 
     // Memory layer: open the database (or create it) and run the recovery
     // sweep so any in-flight turns from a previous crash get cleaned up
@@ -479,6 +489,7 @@ int main(int argc, char** argv) {
     supervisor.stop();
     fsm.stop();
     control.reset();
+    tracer.shutdown();   // flush + tear down OTLP exporter
 
     // M8A Step 4 — write the runtime checkpoint AFTER all producers
     // are quiesced and BEFORE the memory thread closes; we use a

@@ -666,9 +666,26 @@ struct Personality {
     PersonalityDialogueOverride  dialogue;
 };
 
+// M8B Step 3 — OTLP traces, opt-in. Disabled by default; enable by
+// setting `observability.otlp.enabled: true` in YAML and pointing
+// `endpoint` at an otelcol-contrib instance (default
+// `http://127.0.0.1:4318/v1/traces`). When the build was compiled
+// without `ACVA_HAVE_OTLP` (opentelemetry-cpp not found), enabling
+// the flag logs a warn and the wire stays no-op.
+struct OtlpConfig {
+    bool         enabled      = false;
+    std::string  endpoint     = "http://127.0.0.1:4318/v1/traces";
+    std::string  service_name = "acva";
+};
+
+struct ObservabilityConfig {
+    OtlpConfig otlp;
+};
+
 struct Config {
     ModelsConfig models;
     LoggingConfig logging;
+    ObservabilityConfig observability;
     ControlConfig control;
     PipelineConfig pipeline;
     LlmConfig llm;

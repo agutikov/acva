@@ -143,7 +143,74 @@ Dashboard sections:
 - **Audio** — playback underruns, AEC delay, queue depths.
 - **Memory** — turns persisted, summary count, DB size on disk.
 
-## Step 3 — OTLP wiring (opt-in)
+## Step 3 — OTLP wiring (opt-in) — ✅ landed 2026-05-07
+
+Shipped:
+- **Config:** `cfg.observability.otlp.{enabled, endpoint, service_name}`,
+  default disabled (endpoint defaults to
+  `http://127.0.0.1:4318/v1/traces`).
+- **Build gate:** `find_package(opentelemetry-cpp CONFIG QUIET)` in
+  `cmake/Dependencies.cmake`; sets `ACVA_HAVE_OTLP` when present.
+  Linked targets: `opentelemetry-cpp::trace` +
+  `opentelemetry-cpp::otlp_http_exporter`. The define is exported
+  PUBLIC on `acva_core` so test TUs that gate on `#ifdef
+  ACVA_HAVE_OTLP` are in lockstep with the production build.
+- **`src/observability/otlp.{hpp,cpp}`** — `Tracer` class with
+  `init(cfg) / shutdown()` + RAII `Span` handles. The header is
+  otel-free (every otel type is hidden behind `std::shared_ptr<void>`
+  + a `SpanHolder` adapter struct in the .cpp), so no downstream TU
+  pulls in `opentelemetry/...` headers. Stub implementation when
+  `ACVA_HAVE_OTLP` is undefined: `init()` logs a warn if the
+  operator enabled OTLP without the dependency, all methods are
+  no-ops, `Span::active()` returns false. Real implementation
+  uses `OtlpHttpExporter` + `BatchSpanProcessor` +
+  `TracerProvider`; `shutdown()` does a 2 s force-flush before
+  swapping in a `NoopTracerProvider`.
+- **`src/observability/turn_span.{hpp,cpp}`** — bus subscriber
+  that brackets each turn with one `voice.turn` span. Anchors:
+  - **start** on `LlmStarted` (the first event whose `turn` carries
+    the FSM-minted id).
+  - **close ok** on `PlaybackFinished`.
+  - **close error** on `UserInterrupted` (status `interrupted`) or
+    `LlmFinished{cancelled=true}` (status `llm_cancelled`).
+  Per-turn spans are stashed in a mutex-guarded `unordered_map`
+  keyed by `event::TurnId`; the subscriber owns the only reference,
+  so closing happens on terminal-event erase.
+- **main.cpp wiring** — `Tracer` constructed alongside the
+  metrics::Registry; `tracer.init(cfg.observability)` runs before
+  the dialogue path so the first `LlmStarted` lands in the
+  subscriber. `tracer.shutdown()` runs after the supervisor +
+  control plane teardown but before `bus.shutdown()`, so any
+  in-flight Span gets a clean End() before the bus drains.
+- **Tests:** 4 cases in `tests/test_otlp.cpp` covering disabled
+  init, idempotent shutdown, enabled init against an unreachable
+  endpoint (verifies the exporter doesn't synchronously connect on
+  init — flush at shutdown is best-effort), and the subscriber's
+  three close paths (success / interrupted / cancelled). Full
+  suite: **365 cases** (was 361), all green.
+
+Known v1 limitations:
+- **Only the root `voice.turn` span is emitted.** The plan's child
+  spans (`vad`, `stt.partial`, `stt.final`, `prompt.assemble`,
+  `llm.first_token`, `llm.stream`, `tts`, `playback`) are deferred —
+  each requires picking up a SpanContext per turn and threading it
+  through the bus subscribers. Wiring them is mechanical (the same
+  bus events already exist) but not load-bearing for the v1 trace
+  view, which surfaces "turn started → turn done" as the headline
+  span. Operators see one trace per turn, with the right duration
+  and outcome attribute.
+- **No SpanLink between sibling turns** — each is a fresh trace.
+  Cross-turn correlation lives in the session_id (already on every
+  log line), not the trace tree.
+- **Batch processor uses default options** (max queue 2048, max
+  export batch 512, schedule delay 5 s). Tunable later via
+  `BatchSpanProcessorOptions` if real soak loads expose backpressure.
+- **End-to-end smoke against a real otelcol-contrib** is deferred
+  to dogfood — the unit tests verify the exporter's lifecycle
+  against an unreachable endpoint (where the connection refusal is
+  exactly the expected behaviour).
+
+## Step 3 — OTLP wiring (original spec)
 
 Per H2: OTLP traces via `opentelemetry-cpp`. Disabled by default; enabled via `cfg.observability.otlp.endpoint`.
 

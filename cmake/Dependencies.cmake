@@ -59,6 +59,19 @@ else()
     message(STATUS "webrtc-audio-processing-1 not found — M6 AEC will be a no-op stub")
 endif()
 
+# M8B Step 3 — OpenTelemetry traces (opt-in). When the system
+# package is present, src/observability/otlp.cpp picks the real
+# OTLP/HTTP exporter; otherwise it compiles to a no-op stub and the
+# `cfg.observability.otlp.enabled: true` config field surfaces a
+# warn at startup.
+find_package(opentelemetry-cpp CONFIG QUIET)
+if(opentelemetry-cpp_FOUND)
+    set(ACVA_HAVE_OTLP TRUE)
+else()
+    set(ACVA_HAVE_OTLP FALSE)
+    message(STATUS "opentelemetry-cpp not found — OTLP traces will be a no-op stub")
+endif()
+
 # cpp-httplib is vendored as a single header in third_party/cpp-httplib.
 # Used for the HTTP control plane — civetweb symbols inside prometheus-cpp
 # aren't exported, so we run our own HTTP server. Marked SYSTEM so the

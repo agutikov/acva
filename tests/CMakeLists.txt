@@ -45,6 +45,7 @@ add_executable(acva_unit_tests
     test_memory_cli.cpp
     test_memory_thread.cpp
     test_model_controller_client.cpp
+    test_otlp.cpp
     test_paths.cpp
     test_personality.cpp
     test_playback_engine.cpp
