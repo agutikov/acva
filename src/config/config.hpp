@@ -104,6 +104,20 @@ struct ServiceHealthConfig {
 struct LlmConfig {
     std::string base_url = "http://127.0.0.1:8081/v1";
     std::string model = "qwen2.5-7b-instruct";
+    // M8A Step 5 — GGUF filename inside ${ACVA_MODELS_DIR}/llama.cpp/.
+    // When non-empty AND `model_controller_url` is also set,
+    // `acva` startup contacts the controller sidecar to recreate
+    // llama with this file before connecting. Closes the M0-era
+    // asymmetry where `cfg.llm.model` (API alias) and the actual
+    // GGUF served by llama (`ACVA_LLM_MODEL` in compose `.env`) could
+    // drift silently. Empty disables the controller hand-off.
+    std::string model_file;
+    // M8A Step 5 — base URL for the model-controller sidecar
+    // (default `http://127.0.0.1:9877` when the operator opts in).
+    // Empty disables sidecar contact entirely; `model_file` is then
+    // informational only and the operator is responsible for
+    // matching the running llama's loaded file to `cfg.llm.model`.
+    std::string model_controller_url;
     std::string unit = "acva-llama.service";
     double temperature = 0.7;
     // Nucleus sampling — keep tokens whose cumulative prob mass is <= top_p.
@@ -243,6 +257,19 @@ struct SupervisorConfig {
     // start to risk reviving stale conversation context the user
     // expected to be gone.
     uint32_t checkpoint_max_age_seconds = 60;
+    // M8A Step 5 — strict startup. When true, the boot-time gates
+    // (per-service /health probes, force-load round trips, capture
+    // probe, recovery sweep) treat any failure as fatal: the
+    // orchestrator logs every failure with a remediation hint and
+    // exits non-zero instead of falling back to "degraded mode".
+    // Off by default so M0–M7 dogfooding ergonomics are preserved.
+    bool strict_startup = false;
+    // M8A Step 5 — when true, the startup gate force-loads each
+    // configured backend (LLM, STT, TTS) by issuing a tiny round-trip
+    // request that pulls the model into VRAM before traffic flows.
+    // Independent of `strict_startup` — operators can force-load
+    // without strict-exit semantics by leaving `strict_startup=false`.
+    bool startup_force_load = false;
 };
 
 struct MemorySummaryConfig {

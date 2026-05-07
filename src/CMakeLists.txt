@@ -47,6 +47,7 @@ add_library(acva_core STATIC
     event/event.cpp
     http/server.cpp
     llm/client.cpp
+    llm/model_controller_client.cpp
     llm/prompt_builder.cpp
     llm/sse_parser.cpp
     log/json_sink.cpp
@@ -76,6 +77,7 @@ add_library(acva_core STATIC
     supervisor/keep_alive.cpp
     supervisor/probe.cpp
     supervisor/service.cpp
+    supervisor/startup_check.cpp
     supervisor/supervisor.cpp
     supervisor/watchdog.cpp
     tts/openai_tts_client.cpp

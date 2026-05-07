@@ -44,6 +44,7 @@ add_executable(acva_unit_tests
     test_manager.cpp
     test_memory_cli.cpp
     test_memory_thread.cpp
+    test_model_controller_client.cpp
     test_paths.cpp
     test_personality.cpp
     test_playback_engine.cpp
@@ -52,6 +53,7 @@ add_executable(acva_unit_tests
     test_prompt_builder.cpp
     test_service_monitor.cpp
     test_spsc_ring.cpp
+    test_startup_check.cpp
     test_supervisor.cpp
     test_system_aec.cpp
     test_queue.cpp

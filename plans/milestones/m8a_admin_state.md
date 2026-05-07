@@ -450,7 +450,92 @@ identity, we don't paper over them by silently resuming.
 - Integration: live `acva` → `POST /restart` → process restarts within
   2 s → `/status` shows the same turn id continued.
 
-## Step 5 — Boot-time model orchestration
+## Step 5 — Boot-time model orchestration — ✅ landed 2026-05-07
+
+Shipped:
+- **Config:** `cfg.llm.model_file` (GGUF filename), `cfg.llm.model_controller_url`
+  (sidecar base URL — empty disables hand-off), `cfg.supervisor.strict_startup`
+  (default false), `cfg.supervisor.startup_force_load` (default false).
+- **`src/llm/model_controller_client.{hpp,cpp}`** — httplib-based client.
+  `status()` → `GET /llm/status` (parses `loaded_file`/`alias`/`health` with
+  a hand-rolled JSON scanner; no glaze dep on the hot path),
+  `load(file, deadline)` → `POST /llm/load` with the read timeout sized
+  to the deadline + 5 s slack so we hear sidecar timeouts before our
+  own.
+- **`src/supervisor/startup_check.{hpp,cpp}`** — boot-time gates that
+  force-load each configured backend before traffic flows:
+  - LLM: 1-token chat-completion against `cfg.llm.base_url` to pull
+    weights + KV cache into VRAM.
+  - STT: reuses the existing `stt::warmup` silent-WAV transcription
+    helper.
+  - TTS: 5-character "hello" → `/v1/audio/speech` against the
+    fallback voice.
+  - Capture: `Pa_Initialize` + `Pa_OpenStream`/`Pa_CloseStream` on
+    the default input device when `cfg.audio.capture_enabled`.
+  Each failure carries an operator-actionable remediation hint.
+  Skipped entirely when `startup_force_load` is false.
+- **main.cpp wiring:** controller hand-off runs after `system_aec`
+  setup but before the demo dispatcher (so `acva demo` never blocks
+  on a sidecar). When `model_file != current_loaded`, calls
+  `mcc.load(...)` with a 60 s deadline. Failures under
+  `strict_startup` exit non-zero pre-runtime; otherwise log + continue.
+  Startup gates run after the runtime is built but before the main
+  loop; under `strict_startup`, all failures are logged at ERROR with
+  remediation hints, the orchestrator skips the main loop, and the
+  return is `EXIT_FAILURE` after the existing orderly shutdown chain
+  drains.
+- **Go sidecar (`packaging/model-controller/`):**
+  - `main.go` — single-file stdlib-only HTTP server on
+    `127.0.0.1:9877` (override via `LISTEN`). `POST /llm/load`
+    rewrites `packaging/compose/.env` so `ACVA_LLM_MODEL=<file>`,
+    runs `docker compose -p acva --project-directory $COMPOSE_DIR up
+    -d --force-recreate llama`, polls `LLAMA_HEALTH` until 200 or
+    `LOAD_TIMEOUT` (default 60 s). `GET /llm/status` returns the
+    last-known load + a fresh `/health` probe of llama.
+  - `Dockerfile` — two-stage build (golang:alpine compiles, docker:cli
+    runtime); expects host docker socket at `/var/run/docker.sock`.
+  - `README.md` — surface, run instructions, opt-in compose
+    integration stanza (deliberately not added to
+    `docker-compose.yml` because it requires the docker socket
+    privilege), config snippet, failure-mode mapping.
+  - **Verified locally:** binary builds with the host Go toolchain
+    (`go vet ./...` clean, ~10 MB static binary), `/health` and
+    `/llm/status` return correct shapes against an unconfigured
+    llama (status `"unhealthy"` as expected).
+- **Tests:**
+  - `tests/test_startup_check.cpp` — 6 cases: skipped when
+    force-load is off, passes when probed backends respond 200,
+    surfaces HTTP 500 / unreachable port / TTS-voice-not-found
+    failures, multiple components fail together with a single pass.
+  - `tests/test_model_controller_client.cpp` — 6 cases: status
+    parses healthy payload, status returns ClientError on HTTP 500
+    and unreachable port, load success returns parsed status, empty
+    filename → ClientError, empty base_url disables.
+  - Full unit suite: **352 cases** (was 340), all green.
+- **Smoke:** existing `acva demo reload` and `acva demo wipe` still
+  pass after the main.cpp changes.
+
+Known v1 limitations / deferred:
+- The `model-controller` compose service is **not** auto-added to
+  `docker-compose.yml`. Adding the service requires the docker socket
+  bind-mount, which is a privilege escalation worth an explicit
+  operator opt-in. The README documents the exact stanza to paste in.
+- End-to-end smoke (set `cfg.llm.model_file` to a different installed
+  GGUF, watch the sidecar recreate llama, verify acva picks up the
+  new model) is deferred to a manual dogfood pass once the sidecar
+  is wired into a user's compose stack. The C++ side is unit-tested
+  against an in-process fake controller.
+- `cfg.supervisor.startup_force_load` defaults to **false** (more
+  conservative than the plan's "default true when strict_startup is
+  true") so existing M0–M7 dogfooding ergonomics are preserved verbatim
+  — opting in is a one-line config change.
+- The capture-readiness probe runs `Pa_Initialize` synchronously inside
+  the gate. On systems where PortAudio enumeration is slow (the
+  M6/`skip_alsa_full_probe=false` case), this can add 100s of ms to
+  startup. Disable via `startup_force_load: false` if that's a problem;
+  the runtime's existing capture path still owns the real device open.
+
+## Step 5 — Boot-time model orchestration (original spec)
 
 Two related capabilities that put acva in charge of "what models are
 loaded and ready when I'm running" without breaking pillar #1

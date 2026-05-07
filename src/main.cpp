@@ -26,7 +26,9 @@
 #include "orchestrator/tts_stack.hpp"
 #include "audio/apm.hpp"
 #include "audio/pipeline.hpp"
+#include "llm/model_controller_client.hpp"
 #include "stt/openai_stt_client.hpp"
+#include "supervisor/startup_check.hpp"
 #include "supervisor/supervisor.hpp"
 #include "supervisor/watchdog.hpp"
 
@@ -119,6 +121,44 @@ int main(int argc, char** argv) {
         // failure-modes block in system_aec.hpp.
         std::cerr << "acva: system AEC setup failed: " << *err << "\n";
         return EXIT_FAILURE;
+    }
+
+    // ----- M8A Step 5: model-controller hand-off -----
+    // When the operator has wired the controller sidecar (see
+    // packaging/model-controller/) and `cfg.llm.model_file` differs
+    // from what's currently loaded, we ask the sidecar to recreate
+    // llama with the requested GGUF before we touch any backend.
+    // Skipped when `model_controller_url` is empty — the M0…M7 dev
+    // path keeps using `ACVA_LLM_MODEL` in compose .env directly.
+    if (!cfg.llm.model_controller_url.empty()
+        && !cfg.llm.model_file.empty()) {
+        acva::llm::ModelControllerClient mcc(cfg.llm.model_controller_url);
+        const auto cur = mcc.status();
+        const std::string cur_loaded =
+            std::holds_alternative<acva::llm::ControllerStatus>(cur)
+                ? std::get<acva::llm::ControllerStatus>(cur).loaded_file
+                : std::string{};
+        if (cur_loaded != cfg.llm.model_file) {
+            acva::log::info("main", fmt::format(
+                "model-controller: requesting {} (current: '{}')",
+                cfg.llm.model_file, cur_loaded));
+            auto load_res = mcc.load(cfg.llm.model_file, std::chrono::seconds(60));
+            if (auto* err = std::get_if<acva::llm::ClientError>(&load_res)) {
+                if (cfg.supervisor.strict_startup) {
+                    std::cerr << "acva: model-controller load failed: "
+                              << err->message << "\n";
+                    return EXIT_FAILURE;
+                }
+                acva::log::warn("main", fmt::format(
+                    "model-controller load failed (continuing in tolerant mode): {}",
+                    err->message));
+            } else {
+                const auto& s = std::get<acva::llm::ControllerStatus>(load_res);
+                acva::log::info("main", fmt::format(
+                    "model-controller: now serving {} ({})",
+                    s.loaded_file, s.health));
+            }
+        }
     }
 
     // ----- 2.5. Demo subcommand short-circuit -----
@@ -577,9 +617,37 @@ int main(int argc, char** argv) {
         });
     }
 
+    // ----- M8A Step 5: boot-time gates -----
+    // Force-load each configured backend (LLM/STT/TTS) and probe the
+    // capture device. Failures are logged with a remediation hint;
+    // under strict_startup, we set the strict-failure flag and skip
+    // the main loop entirely so the orderly shutdown chain still
+    // runs before we exit non-zero. Skipped when startup_force_load
+    // is off.
+    bool strict_startup_failed = false;
+    {
+        const auto failures = acva::supervisor::run_startup_checks(cfg);
+        for (const auto& f : failures) {
+            const auto msg = fmt::format(
+                "{} startup gate failed: {} — {}",
+                f.component, f.error, f.remediation);
+            if (cfg.supervisor.strict_startup) {
+                acva::log::error("startup_check", msg);
+            } else {
+                acva::log::warn("startup_check", msg);
+            }
+        }
+        if (!failures.empty() && cfg.supervisor.strict_startup) {
+            std::cerr << "acva: " << failures.size()
+                      << " startup gate(s) failed under strict_startup; "
+                         "exiting (see structured logs above)\n";
+            strict_startup_failed = true;
+        }
+    }
+
     // ----- 4. Main loop -----
     bool warm_restart_requested = false;
-    while (acva::cli::signal_received() == 0) {
+    while (acva::cli::signal_received() == 0 && !strict_startup_failed) {
         // M8A Step 4 — warm restart. Drained on the main thread so
         // shutdown ordering against capture / dialogue / tts owners
         // (all locals here) is straightforward.
@@ -699,6 +767,10 @@ int main(int argc, char** argv) {
     bus.shutdown();
     // VramMonitor stops in its destructor when main returns.
 
+    if (strict_startup_failed) {
+        acva::log::error("main", "acva exiting non-zero due to strict_startup gate");
+        return EXIT_FAILURE;
+    }
     acva::log::info("main", "acva exited cleanly");
     return EXIT_SUCCESS;
 }
