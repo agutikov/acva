@@ -13,6 +13,7 @@ add_library(acva_core STATIC
     cli/args.cpp
     cli/memory_cli.cpp
     config/config.cpp
+    config/config_load.cpp
     config/paths.cpp
     config/reload.cpp
     demos/aec.cpp

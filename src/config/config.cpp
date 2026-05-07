@@ -1,12 +1,13 @@
 #include "config/config.hpp"
 
-#include <glaze/glaze.hpp>
-#include <glaze/yaml.hpp>
+// M8B Step 4 build-time split — the Glaze YAML parser is the
+// single dominant cost in this module (~200 s for one TU on the dev
+// box). It now lives alone in `config_load.cpp` so the validators
+// + alias resolution below compile fast in parallel. Don't add
+// `<glaze/...>` here — that would re-collapse the split.
 
 #include <array>
-#include <fstream>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -35,17 +36,6 @@ bool contains(std::string_view value, const auto& valid_set) noexcept {
         }
     }
     return false;
-}
-
-std::string read_file(const std::filesystem::path& path, LoadError& err) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) {
-        err.message = "config: cannot open file: " + path.string();
-        return {};
-    }
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    return ss.str();
 }
 
 } // namespace
@@ -297,7 +287,7 @@ std::optional<LoadError> validate(const Config& cfg) {
 // (back-compat for configs that put the full id directly), EXCEPT
 // `tts.voices` — every entry there must resolve through the registry.
 // See ModelsConfig in config.hpp for the full design rationale.
-namespace {
+namespace detail {
 
 // Overlay the active personality's non-empty fields onto the top-level
 // subsystem fields. Runs BEFORE alias resolution below so personality
@@ -372,28 +362,7 @@ void resolve_aliases(Config& cfg) {
                        .voice_id = it->second.voice };
     }
 }
-} // namespace
 
-LoadResult load_from_string(std::string_view yaml) {
-    Config cfg;
-    auto ec = glz::read_yaml(cfg, yaml);
-    if (ec) {
-        return LoadError{"config: parse error: " + glz::format_error(ec, yaml)};
-    }
-    resolve_aliases(cfg);
-    if (auto verr = validate(cfg)) {
-        return *verr;
-    }
-    return cfg;
-}
-
-LoadResult load_from_file(const std::filesystem::path& path) {
-    LoadError err;
-    auto text = read_file(path, err);
-    if (!err.message.empty()) {
-        return err;
-    }
-    return load_from_string(text);
-}
+} // namespace detail
 
 } // namespace acva::config

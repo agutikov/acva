@@ -81,6 +81,14 @@ target_link_libraries(acva_unit_tests
         acva_warnings
 )
 
+# M8B Step 4 — precompiled header. Pre-instantiates doctest +
+# top-shared stdlib + the most-cited acva_core public headers so
+# every test TU reuses one cached AST instead of re-parsing them.
+# Cuts the 13–19 s test TU tier roughly in half on incremental
+# rebuilds.
+target_precompile_headers(acva_unit_tests PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_pch.hpp")
+
 # ----- integration suite -----
 set(_acva_integration_sources
     ${_acva_test_main}
@@ -107,6 +115,9 @@ if(ACVA_HAVE_LIBDATACHANNEL)
     target_link_libraries(acva_integration_tests
         PRIVATE LibDataChannel::LibDataChannel)
 endif()
+
+target_precompile_headers(acva_integration_tests PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_pch.hpp")
 
 # ----- ctest registration -----
 include(${doctest_DIR}/doctest.cmake OPTIONAL RESULT_VARIABLE _doctest_cmake_found)

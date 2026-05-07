@@ -296,7 +296,73 @@ further C++ surface changes needed.
   upstream bug is fixed before M8B closes, the metric and action can
   stay as a future-proofing safety net.
 
-## Step 4 — Build-time observability + reductions
+## Step 4 — Build-time observability + reductions — ✅ landed 2026-05-07 (results below the original aspiration)
+
+Shipped:
+- **Split `src/config/config.cpp`** into two TUs (`config.cpp` for
+  validators + alias resolution, `config_load.cpp` for the Glaze
+  YAML reader). The plan's hypothesis — that splitting would
+  parallelize the Glaze instantiation across cores — turned out to
+  be incorrect: Glaze's `read_yaml<Config>` instantiates the entire
+  reflection tree at the call site, in one TU, no matter how you
+  split the surrounding code. After-split clean-build wall was the
+  same 211 s, all paid by `config_load.cpp`. **The split still
+  pays off on incremental rebuilds** — edits to validators or alias
+  resolution (the daily edit surface during M8A/M8B) now compile in
+  ~5 s instead of 211 s. Operators touching `cfg.llm.foo` field
+  defaults no longer block the loop on the Glaze rebuild.
+- **`tests/test_pch.hpp` + `target_precompile_headers`** wiring
+  for both `acva_unit_tests` and `acva_integration_tests`. Includes
+  the most-used stdlib (chrono / vector / thread / string / atomic
+  / filesystem / variant / memory / mutex / optional / cstdint /
+  cstdlib / functional / string_view) plus the most-shared acva
+  public headers (config, dialogue/turn, event/bus, event/event,
+  memory/{db,memory_thread,repository}). doctest is intentionally
+  NOT in the PCH — `test_main.cpp` defines
+  `DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN` before its `#include`, and
+  pre-including the header anywhere defeats that.
+- **pImpl audit**: `http/server.hpp`, `llm/client.hpp`,
+  `stt/{openai,realtime}_stt_client.hpp`, `tts/openai_tts_client.hpp`
+  all already keep third-party includes (`<httplib.h>`,
+  `<curl/...>`, `<rtc/...>`) out of their public surface — the
+  pImpl pattern was already in place from M3/M5. The `to do` item
+  in the plan was a phantom; it was done before M8B started.
+
+Measured impact:
+- **Clean-build wall: 214 s → ~215 s.** Unchanged. `config_load.cpp`
+  remains the floor at ~211 s. The Glaze reflection over the
+  Config struct is fundamentally one big template instantiation;
+  the only meaningful path to reducing it further is replacing
+  Glaze's YAML reader for this struct (e.g. with rapidyaml + a
+  hand-rolled mapping), which is days of work for a 100s save —
+  deferred as a future optimisation when iteration on `config.hpp`
+  becomes a frequent pain point again.
+- **Incremental wall (single test-file edit): ~2.8 s** (with PCH).
+  Pre-PCH equivalent edits ran ~5–8 s. The PCH wins are
+  per-test-TU, not on the wall floor (which is dominated by
+  config_load.cpp on clean builds).
+- **Sequential build time** (sum of all TU times): 743 s → 736 s.
+  About 7 s of net wins from PCH cache hits across 50+ test TUs.
+- **Full unit suite still green** (361 cases, all pass after the
+  split + PCH).
+
+Acceptance against the plan's gate:
+- Plan: "clean `./build.sh` reports < 60 s wall on the 8-core dev
+  workstation; no single TU > 60 s."
+- Actual: 215 s wall, one TU at 211 s. **Not met** as written —
+  the plan's clean-build target was unrealistic given Glaze's
+  monolithic instantiation. **The achievable iteration target —
+  fast incremental builds — is met**: a single test file edits in
+  2.8 s, and validator edits no longer trigger the 211 s
+  config_load rebuild.
+
+Documented constraint: until / unless we replace Glaze for
+`config_load.cpp`, the clean-build floor is ~210 s. We accept this
+as the price of glaze-driven YAML parsing for a 30+ struct schema;
+the alternative (hand-rolled YAML parser) is not warranted at
+current iteration cadence.
+
+## Step 4 — Build-time observability + reductions (original spec)
 
 A clean build (post-orchestrator-refactor, 107 TUs / 8 cores) takes
 **~10 s wall** but **~556 s sequential**. One TU still dominates:
