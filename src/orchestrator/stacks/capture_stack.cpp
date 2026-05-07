@@ -80,6 +80,9 @@ build_capture_stack(const config::Config& cfg,
     apc.vad_model_path              = cfg.vad.model_path;
     // M7 Bug 4 — STT-side RMS gate against Whisper hallucinations.
     apc.min_utterance_rms           = cfg.stt.min_utterance_rms;
+    // M8C Step 1 — wake-word gate. Default off; enable via
+    // cfg.audio.wake_word.enabled in the operator's YAML.
+    apc.wake_word                   = cfg.audio.wake_word;
 
     // M6 — install the AEC stage when both playback (loopback ring)
     // and an APM-capable build are present. cfg.apm controls the

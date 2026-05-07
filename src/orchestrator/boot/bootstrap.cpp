@@ -59,6 +59,24 @@ load_and_resolve_config(const std::filesystem::path& cli_config_path,
             cfg.vad.model_path, "silero/silero_vad.onnx").string();
     }
 
+    // M8C Step 1 — resolve each wake-word model path against
+    // XDG_DATA_HOME. Convention mirrors VAD: bare filenames land
+    // under `${XDG_DATA_HOME}/acva/models/wake_word/<file>`;
+    // a path with subdirectories (e.g. "openwakeword/hey-jarvis.onnx")
+    // is resolved relative to `${XDG_DATA_HOME}/acva/`; absolute
+    // paths are kept verbatim. Personality overlay (in
+    // config_load.cpp) runs first, so the list we resolve here is
+    // the post-overlay one.
+    for (auto& path_str : cfg.audio.wake_word.model_paths) {
+        if (path_str.empty()) continue;
+        std::filesystem::path p(path_str);
+        if (p.is_absolute()) continue;
+        if (!p.has_parent_path()) {
+            p = std::filesystem::path{"models/wake_word"} / p;
+        }
+        path_str = (config::xdg_data_home() / "acva" / p).string();
+    }
+
     return LoadedConfig{std::move(cfg), std::move(path)};
 }
 

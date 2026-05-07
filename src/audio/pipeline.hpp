@@ -7,6 +7,7 @@
 #include "audio/resampler.hpp"
 #include "audio/utterance.hpp"
 #include "audio/vad.hpp"
+#include "audio/wake_word.hpp"
 #include "event/bus.hpp"
 
 #include <string>
@@ -63,6 +64,14 @@ public:
         // near-silence frames that produce its subtitle hallucinations.
         // 0 disables the gate. Sourced from cfg.stt.min_utterance_rms.
         std::uint32_t min_utterance_rms = 0;
+
+        // M8C Step 1 — wake-word gate. When `wake_word.enabled` is
+        // true the pipeline runs the wake-word inference on every
+        // resampled frame and gates downstream VAD/endpointer/STT
+        // sink off until a positive detection opens the gate. When
+        // disabled (default), the gate is permanently open and the
+        // pipeline behaves exactly as M5.
+        config::WakeWordConfig wake_word{};
     };
 
     AudioPipeline(Config cfg,
@@ -99,6 +108,13 @@ public:
     // synchronised, so the caller doesn't need to coordinate with the
     // pipeline worker thread.
     [[nodiscard]] Endpointer* endpointer() noexcept { return &endpointer_; }
+
+    // M8C — non-owning handle to the WakeWord engine, exposed for
+    // tests (set_test_score) + the reload path that may want to
+    // hot-update the threshold. nullptr when wake_word_ wasn't
+    // constructed (only happens in legacy test paths that bypass
+    // the AudioPipeline ctor).
+    [[nodiscard]] WakeWord* wake_word() noexcept { return wake_word_.get(); }
 
     // M8A Step 2 — privacy mute. When true, process_frame drains the
     // ring (so the audio thread doesn't back-pressure) but performs
@@ -143,6 +159,14 @@ private:
 
     Resampler        resampler_;
     std::unique_ptr<SileroVad> vad_;
+    std::unique_ptr<WakeWord>  wake_word_;
+    // M8C — gate state: when `wake_word.enabled` is false, the gate
+    // is treated as permanently open (no behavior change vs M5).
+    // When enabled, this stamp is updated on each positive
+    // detection; the gate is open while
+    // (now - gate_open_stamp_) < followup_window_ms.
+    std::chrono::steady_clock::time_point gate_open_stamp_{};
+    bool                                  gate_was_open_ = false;
     std::unique_ptr<Apm>       apm_;
     Endpointer       endpointer_;
     UtteranceBuffer  utterance_buffer_;

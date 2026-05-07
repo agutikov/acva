@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 namespace acva::config {
 
@@ -356,6 +357,30 @@ struct AudioLoopbackConfig {
     uint32_t ring_seconds = 2;
 };
 
+// M8C Step 1 — wake-word gate. Default off, in which case the audio
+// pipeline behaves exactly as M5 (always-on dialogue).
+//
+// When enabled, the pipeline runs the wake-word inference on every
+// resampled 16 kHz frame. While no recent detection has fired,
+// downstream stages (Silero VAD, Endpointer, the M5 streaming-STT
+// sink) are gated off — so background speech doesn't trigger turns.
+// A positive detection (confidence >= threshold) opens the gate for
+// `followup_window_ms`; subsequent SpeechStarted events refresh the
+// window so multi-turn conversation flows naturally without
+// requiring the user to repeat the wake phrase.
+//
+// model_paths is a list — multiple wake phrases ("hey acva", "ok
+// acva") can be loaded simultaneously and the highest-confidence
+// match wins. Paths resolve against XDG_DATA_HOME via
+// config::resolve_data_path; bare filenames live under
+// `${XDG_DATA_HOME}/acva/models/wake_word/`.
+struct WakeWordConfig {
+    bool                      enabled = false;
+    std::vector<std::string>  model_paths;
+    float                     threshold = 0.6F;
+    uint32_t                  followup_window_ms = 8000;
+};
+
 struct AudioConfig {
     // PortAudio device selector. "default" → host default; otherwise
     // matched by name substring (case-insensitive). Empty == "default".
@@ -383,6 +408,8 @@ struct AudioConfig {
     uint32_t half_duplex_hangover_ms    = 200;
     // M6 — AEC reference-signal loopback ring.
     AudioLoopbackConfig loopback;
+    // M8C Step 1 — wake-word gate. Disabled by default.
+    WakeWordConfig      wake_word;
     // M6 — when true (default on Linux), `acva` writes a minimal
     // ALSA config to a tmpfile and points `ALSA_CONFIG_PATH` at it
     // BEFORE any `Pa_Initialize` runs. This stops PortAudio's ALSA
@@ -646,6 +673,25 @@ struct PersonalityDialogueOverride {
     std::optional<uint32_t> max_sentence_chars;
 };
 
+// Per-personality wake-word override (M8C Step 1). Lets each
+// character respond to a different phrase — "hey jarvis" for the
+// helpful-assistant personality, "ok bender" for the snarky one,
+// etc. The other wake-word knobs (`enabled`, `followup_window_ms`)
+// are deliberately NOT overridable: they're operator deployment
+// settings (am I in a multi-occupant room? how long after the
+// phrase should I keep listening?), not character-specific.
+struct PersonalityWakeWordOverride {
+    // When non-empty, REPLACES (not merges with) the top-level
+    // `cfg.audio.wake_word.model_paths`. A personality with no
+    // models declared keeps the top-level list, so a "default"
+    // wake-word can apply to multiple personalities.
+    std::vector<std::string> model_paths;
+    // Optional confidence-threshold override for this personality's
+    // wake words — useful when one character's models trigger more
+    // easily than another's. nullopt keeps the top-level threshold.
+    std::optional<float>     threshold;
+};
+
 struct Personality {
     // Free-form one-liner shown by /status (post-M8A) and useful as a
     // YAML anchor when the user is browsing the registry. Not consumed
@@ -664,6 +710,7 @@ struct Personality {
     std::optional<uint32_t> tempo_wpm;
     PersonalityLlmOverride       llm;
     PersonalityDialogueOverride  dialogue;
+    PersonalityWakeWordOverride  wake_word;
 };
 
 // M8B Step 3 — OTLP traces, opt-in. Disabled by default; enable by

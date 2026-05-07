@@ -299,6 +299,39 @@ audio:
   # jitter under load.
   loopback:
     ring_seconds: 2
+  # M8C Step 1 — wake-word gate. Default off, in which case the audio
+  # pipeline behaves exactly as M5 (always-on dialogue). Turn on for
+  # shared workstations / multi-occupant rooms / TV-on backgrounds
+  # where every utterance shouldn't trigger a turn.
+  #
+  # When enabled, the pipeline runs the wake-word inference on every
+  # 16 kHz frame; downstream stages (VAD, endpointer, STT) are gated
+  # off until a positive detection. The gate stays open for
+  # `followup_window_ms` after each detection (refreshes on subsequent
+  # SpeechStarted), so multi-turn conversation flows without
+  # re-triggering the phrase.
+  #
+  # Paths resolve against `${XDG_DATA_HOME:-~/.local/share}/acva/`
+  # — bare filenames land under `models/wake_word/<file>`. Install
+  # the openWakeWord ONNX models (https://github.com/dscripka/openWakeWord)
+  # there. Multiple wake phrases can be loaded simultaneously; the
+  # highest-confidence match wins.
+  #
+  # NOTE — the v1 (M8C Step 1) implementation ships the gate
+  # framework but NOT the openWakeWord 3-stage ONNX inference yet
+  # (mel-spectrogram + embedding + classifier). With `enabled: true`
+  # and models configured, the loader logs them but the inference
+  # is a placeholder until the follow-up slice. Set `enabled: false`
+  # for production until that lands.
+  wake_word:
+    enabled: false
+    model_paths: []
+    # Example — uncomment after installing the models:
+    # model_paths:
+    #   - hey_jarvis_v0.1.onnx
+    #   - ok_acva_custom.onnx
+    threshold: 0.6                # 0..1 confidence; openWakeWord-style
+    followup_window_ms: 8000      # gate stays open this long after a hit
   # M6 — sidestep PortAudio's full ALSA-PCM probe at startup. The
   # alsa-pipewire-jack glue's snd_pcm_close deadlocks pipewire's
   # thread loop, adding ~4 minutes to acva startup until it times
@@ -509,6 +542,12 @@ active_personality: geek_enthusiast
 personalities:
   consultant:
     description: "AI expert consultant — concise, accurate, calm"
+    # Stricter activation — a consultant shouldn't perk up at every
+    # half-mumbled phrase. Higher threshold means fewer false
+    # positives at the cost of slightly more false negatives.
+    wake_word:
+      threshold: 0.75
+      # model_paths inherits the top-level audio.wake_word.model_paths.
     system_prompts:
       en: |
         You are an experienced AI consultant.
@@ -537,6 +576,11 @@ personalities:
 
   geek_enthusiast:
     description: "Obsessed AI geek — way too into it, technically correct"
+    # Lighter activation — the geek is delighted to chat, so a
+    # softer threshold fits the persona. Override only the
+    # threshold; model_paths fall through to the top-level list.
+    wake_word:
+      threshold: 0.55
     system_prompts:
       en: |
         You are an unrepentant AI geek who got way too deep into the topic and is genuinely thrilled to be talking about it.

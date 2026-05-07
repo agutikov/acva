@@ -9,6 +9,7 @@ add_library(acva_core STATIC
     audio/resampler.cpp
     audio/utterance.cpp
     audio/vad.cpp
+    audio/wake_word.cpp
     audio/wav.cpp
     cli/args.cpp
     cli/memory_cli.cpp

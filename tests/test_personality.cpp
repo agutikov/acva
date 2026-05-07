@@ -246,3 +246,86 @@ TEST_CASE("llm: top_p and repeat_penalty round-trip from YAML") {
     CHECK(cfg.llm.top_p == doctest::Approx(0.9));
     CHECK(cfg.llm.repeat_penalty == doctest::Approx(1.15));
 }
+
+TEST_CASE("personality: wake_word.model_paths replaces top-level list") {
+    constexpr auto yaml = R"(
+logging: {}
+control: {}
+audio:
+  wake_word:
+    enabled: true
+    model_paths:
+      - "default/hey-acva.onnx"
+    threshold: 0.6
+    followup_window_ms: 8000
+active_personality: jarvis
+personalities:
+  jarvis:
+    description: "wakes on 'hey jarvis'"
+    wake_word:
+      model_paths:
+        - "jarvis/hey-jarvis.onnx"
+        - "jarvis/ok-jarvis.onnx"
+)";
+    auto r = load_from_string(yaml);
+    REQUIRE(std::holds_alternative<Config>(r));
+    auto& cfg = std::get<Config>(r);
+    REQUIRE(cfg.audio.wake_word.model_paths.size() == 2);
+    CHECK(cfg.audio.wake_word.model_paths[0] == "jarvis/hey-jarvis.onnx");
+    CHECK(cfg.audio.wake_word.model_paths[1] == "jarvis/ok-jarvis.onnx");
+    // enabled + followup_window_ms stay global (not overridable).
+    CHECK(cfg.audio.wake_word.enabled);
+    CHECK(cfg.audio.wake_word.followup_window_ms == 8000);
+    // threshold not overridden — top-level value survives.
+    CHECK(cfg.audio.wake_word.threshold == doctest::Approx(0.6));
+}
+
+TEST_CASE("personality: wake_word.threshold overrides top-level only when set") {
+    constexpr auto yaml = R"(
+logging: {}
+control: {}
+audio:
+  wake_word:
+    enabled: true
+    model_paths:
+      - "default/hey-acva.onnx"
+    threshold: 0.6
+active_personality: cautious
+personalities:
+  cautious:
+    description: "stricter activation"
+    wake_word:
+      threshold: 0.85
+)";
+    auto r = load_from_string(yaml);
+    REQUIRE(std::holds_alternative<Config>(r));
+    auto& cfg = std::get<Config>(r);
+    // Top-level model_paths survives — personality didn't override.
+    REQUIRE(cfg.audio.wake_word.model_paths.size() == 1);
+    CHECK(cfg.audio.wake_word.model_paths[0] == "default/hey-acva.onnx");
+    // Threshold did get overridden.
+    CHECK(cfg.audio.wake_word.threshold == doctest::Approx(0.85));
+}
+
+TEST_CASE("personality: empty wake_word block leaves top-level untouched") {
+    constexpr auto yaml = R"(
+logging: {}
+control: {}
+audio:
+  wake_word:
+    enabled: true
+    model_paths:
+      - "default/hey-acva.onnx"
+    threshold: 0.6
+active_personality: bare
+personalities:
+  bare:
+    description: "no wake_word override"
+)";
+    auto r = load_from_string(yaml);
+    REQUIRE(std::holds_alternative<Config>(r));
+    auto& cfg = std::get<Config>(r);
+    REQUIRE(cfg.audio.wake_word.model_paths.size() == 1);
+    CHECK(cfg.audio.wake_word.model_paths[0] == "default/hey-acva.onnx");
+    CHECK(cfg.audio.wake_word.threshold == doctest::Approx(0.6));
+}

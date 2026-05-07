@@ -1,0 +1,71 @@
+#pragma once
+
+#include "config/config.hpp"
+
+#include <cstdint>
+#include <memory>
+#include <span>
+
+namespace acva::audio {
+
+// M8C Step 1 — wake-word inference wrapper.
+//
+// Mirrors the SileroVad surface (push_frame returns a probability)
+// so the audio pipeline can call both with the same loop. Two
+// implementations:
+//
+//   1. **Real ONNX path** (gated on `ACVA_HAVE_ONNXRUNTIME`).
+//      Loads each `cfg.audio.wake_word.model_paths` entry as an
+//      ONNX session and runs them on every resampled 16 kHz int16
+//      frame. The current implementation is a placeholder that
+//      always reports 0.0 — the openWakeWord pipeline (Mel
+//      spectrogram + embedding model + per-word classifier head)
+//      lands in a follow-up. Until then the gate framework is
+//      testable via `set_test_score()`.
+//
+//   2. **Stub path** (no ONNX Runtime). Always reports 0.0.
+//
+// Either way the class is cheap to construct + cheap to call from
+// the audio pipeline worker thread; the per-frame allocation cost
+// is amortized across runs.
+class WakeWord {
+public:
+    explicit WakeWord(const config::WakeWordConfig& cfg);
+    ~WakeWord();
+
+    WakeWord(const WakeWord&)            = delete;
+    WakeWord& operator=(const WakeWord&) = delete;
+    WakeWord(WakeWord&&)                 = delete;
+    WakeWord& operator=(WakeWord&&)      = delete;
+
+    // True when the WakeWord engine has at least one loaded model.
+    // When `cfg.enabled` is true but no models loaded successfully
+    // (paths missing, ONNX import failed), the engine logs a warn
+    // at construction and `loaded()` returns false — the pipeline
+    // gate then treats the wake-word path as a no-op (gate stays
+    // open / closed per its initial state).
+    [[nodiscard]] bool loaded() const noexcept;
+
+    // Push one 16 kHz int16 frame. Returns the highest confidence
+    // score across all loaded models, in [0..1]. Returns 0 when no
+    // models are loaded OR when there's no positive evidence yet.
+    // Thread-safe only insofar as one thread calls this at a time
+    // (matching SileroVad's contract — the pipeline worker owns
+    // the call site).
+    [[nodiscard]] float push_frame(std::span<const std::int16_t> samples);
+
+    // Tests inject a forced score that overrides the inference
+    // result on the next push_frame call. -1 disables the override
+    // and returns to the model's actual output. Used by
+    // tests/test_wake_word.cpp + the pipeline-gate tests.
+    void set_test_score(float score) noexcept { test_score_ = score; }
+
+private:
+    struct Impl;
+
+    config::WakeWordConfig cfg_;
+    float                  test_score_ = -1.0F;
+    std::unique_ptr<Impl>  impl_;
+};
+
+} // namespace acva::audio

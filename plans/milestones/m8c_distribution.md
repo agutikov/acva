@@ -23,7 +23,80 @@ The split from the original M8 is purely organizational; M8 was growing past 11 
 - Admin / control plane (M8A).
 - Soak / observability (M8B).
 
-## Step 1 — Wake-word
+## Step 1 — Wake-word — ✅ framework landed 2026-05-07 (openWakeWord ONNX inference deferred)
+
+Shipped:
+- **Config:** `cfg.audio.wake_word.{enabled, model_paths, threshold,
+  followup_window_ms}`. Default disabled — pipeline behaves exactly
+  as M5.
+- **`src/audio/wake_word.{hpp,cpp}`** — WakeWord wrapper parallel to
+  `audio::SileroVad`. Gated on `ACVA_HAVE_ONNXRUNTIME` (already a dep
+  since M4 for Silero VAD); loads zero-or-more ONNX sessions from the
+  configured model paths, logs warns on missing files / load failures.
+  `push_frame(samples) → confidence` + `set_test_score(float)` test
+  seam for the pipeline-gate tests. **Note:** the actual inference
+  implementation is a placeholder that always returns 0 — the
+  openWakeWord 3-stage pipeline (Mel spectrogram + embedding model +
+  per-word classifier) lands in a follow-up. The framework + gate
+  semantics are testable today via `set_test_score`.
+- **`AudioPipeline::Config.wake_word`** — config struct propagated
+  from `cfg.audio.wake_word` via `capture_stack.cpp`.
+- **Pipeline gate** in `process_frame()`: when
+  `cfg.wake_word.enabled` is true, every resampled frame goes
+  through the wake-word inference; positive detections (score >=
+  threshold) refresh `gate_open_stamp_`. Gate is open while
+  `(now - stamp) <= followup_window_ms`. While closed, the VAD,
+  endpointer, and live STT sink are all skipped — no
+  `SpeechStarted` events fire on background speech. On the open→closed
+  transition, `endpointer_.force_endpoint(...)` flushes any
+  in-progress utterance so a late SpeechEnded doesn't leak past the
+  gate. When `wake_word.enabled` is false, the gate is permanently
+  open and the pipeline path is bit-for-bit M5.
+- **`AudioPipeline::wake_word()`** accessor for tests + future
+  hot-reload paths.
+- **Tests** (5 cases / 10 assertions) in
+  `tests/test_wake_word.cpp`:
+  - WakeWord stub returns 0 with no models loaded.
+  - `set_test_score()` plumbing works + the override clears.
+  - Gate closed (test_score = 0) → forced VAD probability does NOT
+    produce SpeechStarted.
+  - Gate open (test_score >= threshold) → forced VAD probability
+    produces exactly one SpeechStarted.
+  - `wake_word.enabled = false` → gate always open, behavior
+    matches M5 exactly even with test_score = 0.
+  - Full unit suite: **370 cases** (was 365), all green.
+
+Acceptance against the plan's gate:
+- Plan: "With `cfg.audio.wake_word.enabled: true`, the agent
+  silently ignores background speech (no `SpeechStarted` events on
+  the bus). Saying the wake phrase opens the gate; the next
+  utterance routes through the M5 STT path normally. Latency cost
+  vs M5 default ≤ 50 ms per turn."
+- Actual: gate semantics ✅ (verified via tests). Latency
+  measurement deferred until the real inference lands — the
+  placeholder is an O(1) early return that adds ~ns. Real
+  openWakeWord inference target is < 2 ms/frame per
+  `plans/milestones/m8c_distribution.md` Risks table.
+
+Deferred follow-up — **the actual openWakeWord ONNX integration**:
+- Three ONNX graphs in sequence: melspectrogram.onnx (16 kHz int16
+  → 32 mel bins) → embedding_model.onnx (mel → 96-dim embedding) →
+  per-word classifier (embedding → confidence). Each requires
+  matching input/output tensor shapes that depend on which
+  openWakeWord release the operator pulls.
+- `tools/acva-models` registry entry for the wake-word models +
+  download URLs. The openWakeWord HuggingFace mirror has stable
+  URLs.
+- `scripts/download-wake-word.sh` (or extend `tools/acva-models`).
+- A demo `acva demo wake-word` that records 5 s of mic, runs the
+  inference, and prints per-frame confidences — operator-side
+  threshold tuning aid.
+
+The framework + gate are sufficient for the M8C MVP gate semantics
+(operator opts in, the pipeline reliably suppresses background
+speech). The actual phrase-recognition lives in the follow-up.
+
+## Step 1 — Wake-word (original spec)
 
 A lightweight keyword spotter ahead of the VAD that lets the agent
 listen passively to background speech but only feed audio into the

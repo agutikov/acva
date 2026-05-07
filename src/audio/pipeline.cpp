@@ -50,6 +50,12 @@ AudioPipeline::AudioPipeline(Config cfg,
             static_cast<int>(cfg_.output_sample_rate);
         apm_ = std::make_unique<Apm>(apm_cfg, cfg_.loopback);
     }
+
+    // M8C — wake-word gate. Constructed unconditionally so tests
+    // can flip behavior via `wake_word_->set_test_score(...)` even
+    // when cfg.wake_word.enabled=false; production runs check
+    // cfg_.wake_word.enabled before consulting it.
+    wake_word_ = std::make_unique<WakeWord>(cfg_.wake_word);
 }
 
 AudioPipeline::~AudioPipeline() { stop(); }
@@ -159,12 +165,43 @@ void AudioPipeline::process_frame(const AudioFrame& frame) {
     // Always-on append so the rolling pre-buffer stays warm.
     utterance_buffer_.append(resampled);
 
+    // M8C — wake-word gate. The wake-word inference always runs
+    // when `wake_word_.enabled=true`; downstream stages (VAD,
+    // endpointer, live_sink) are gated until a positive detection.
+    // When disabled, the gate is permanently open (gate_is_open
+    // returns true) and the pipeline behaves exactly as M5.
+    bool gate_is_open = true;
+    if (cfg_.wake_word.enabled && wake_word_) {
+        const float score = wake_word_->push_frame(resampled);
+        if (score >= cfg_.wake_word.threshold) {
+            gate_open_stamp_ = frame.captured_at;
+        }
+        const auto window = std::chrono::milliseconds{
+            cfg_.wake_word.followup_window_ms};
+        gate_is_open = (gate_open_stamp_.time_since_epoch().count() != 0)
+                    && (frame.captured_at - gate_open_stamp_) <= window;
+        if (gate_was_open_ && !gate_is_open) {
+            // Window expired — close any in-progress utterance so a
+            // late SpeechEnded doesn't leak past the gate, and reset
+            // the endpointer so the next open gets a clean start.
+            endpointer_.force_endpoint(frame.captured_at);
+            in_speech_ = false;
+        }
+        gate_was_open_ = gate_is_open;
+    }
+
     // M5 streaming-STT sink: invoked while between SpeechStarted and
     // SpeechEnded so the realtime STT client receives audio as it
     // arrives. Coexists with the M4B request/response path on the
     // UtteranceBuffer.
-    if (in_speech_ && live_sink_) {
+    if (gate_is_open && in_speech_ && live_sink_) {
         live_sink_(resampled);
+    }
+
+    if (!gate_is_open) {
+        // Wake-word gate is closed: skip VAD + endpointer entirely
+        // so background speech doesn't trigger SpeechStarted.
+        return;
     }
 
     if (vad_) {

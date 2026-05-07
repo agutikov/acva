@@ -322,6 +322,18 @@ void apply_active_personality(Config& cfg) {
     if (p.dialogue.max_sentence_chars)
         cfg.dialogue.sentence_splitter.max_sentence_chars =
             *p.dialogue.max_sentence_chars;
+
+    // M8C Step 1 — per-personality wake-word override. Non-empty
+    // model_paths REPLACES the top-level list (so a personality
+    // owns its own phrases without inheriting the default ones);
+    // threshold optional-replaces. enabled + followup_window_ms
+    // stay global (operator deployment knobs, not character traits).
+    if (!p.wake_word.model_paths.empty()) {
+        cfg.audio.wake_word.model_paths = p.wake_word.model_paths;
+    }
+    if (p.wake_word.threshold) {
+        cfg.audio.wake_word.threshold = *p.wake_word.threshold;
+    }
 }
 
 void resolve_aliases(Config& cfg) {

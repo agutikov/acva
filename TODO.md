@@ -11,6 +11,9 @@ process it and load into memory + add memory read instructions into context
 so agent can answer questions about itself
 
 
+memory-personality relations - everything is optional: n-n relation
+
+
 Dialog:
     - silence is important, remove annoying "How can I help you" after every response
     - verify and eliminate hidden prompts in GGUF
