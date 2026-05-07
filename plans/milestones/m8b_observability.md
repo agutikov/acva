@@ -22,7 +22,81 @@ The split from the original M8 is purely organizational: M8 was growing past 11 
 - Wake-word, packaging, docs, final sweep (covered by M8C).
 - New features. M8 polishes existing ones.
 
-## Step 1 — Soak test infrastructure
+## Step 1 — Soak test infrastructure — ✅ harness landed 2026-05-07 (4-hour run pending dogfood)
+
+Shipped:
+- `scripts/soak-driver.py` (~330 LOC, stdlib-only Python). Spawns
+  `acva --stdin`, feeds random prompts at 5–30 s intervals, polls
+  `/metrics` + `/status` every 5 s into a CSV, monitors
+  `voice_speaches_wedged`, runs `docker compose -f
+  packaging/compose/docker-compose.yml restart speaches` on the
+  rising edge with a 60 s cooldown between restarts. Tracks restart
+  count toward the `≤ 2` acceptance gate. Reads RSS from
+  `/proc/<acva-pid>/status` directly (Prometheus doesn't expose it).
+- `scripts/soak.sh` — bash wrapper. `--duration 4h | 30m | 240s |
+  14400`, `--output DIR` (default `tests/soak/reports/<isodate>/`),
+  `--config PATH`, `--seed N`. exec's into the Python driver.
+- `tests/soak/prompts.txt` — 30-line corpus (factual / conversational
+  / creative / code mix). Comments + blank lines stripped at load.
+- Soak report (`<output>/soak-report.txt`): start/end timestamps,
+  prompts sent, acva exit code, RSS baseline + final + growth (MiB),
+  queue depth max + final, P95 first-audio baseline + final + drift,
+  speaches restarts, wedge events, playback underruns. Acceptance
+  gate: `no_crashes`, `rss_growth_under_limit`,
+  `queue_depth_stable`, `service_restarts_ok`. Per-tick CSV
+  (`soak-metrics.csv`) holds the raw time series; acva's stderr
+  goes to `acva.log` next to it.
+- Smart gate semantics: `rss_growth_under_limit` is reported `n/a`
+  on runs shorter than `WARMUP_SEC + 10 min` (1 h 10 m) so smoke
+  runs don't spuriously fail on legitimate startup load.
+
+Smoke verified end-to-end:
+- 30 s run: harness spawns, polls, classifier identifies the
+  speaches process at 1190 MiB (matches the documented turbo+int8
+  baseline), CSV + report produced, gate logic correct (FAIL
+  intentional on too-short smoke).
+- 60 s run: 3 prompts sent, queue_depth_max=28, no crashes, no
+  restarts → overall PASS with RSS gate skipped.
+
+Known v1 limitations:
+- **P95 first-audio drift is a placeholder (0%).** Reading histogram
+  buckets from /metrics is a follow-up; the dashboard (Step 2) will
+  read them directly via Grafana/PromQL anyway, and the soak gate
+  becomes meaningful once that's wired.
+- **Underrun count is high under FakeDriver-only / no real
+  speakers** because PortAudio is open with no real output. Not a
+  real signal in the v1 harness; the production 4-hour soak runs
+  with the dev workstation's actual speakers + AEC, where underruns
+  reflect real playback starvation.
+- **Queue-depth gate is a peak threshold (500), not the
+  monotonic-growth slope check the plan calls for.** Tightens when
+  time-series analysis lands.
+- **No barge-in injection in v1** (the plan's 15% mid-turn barge-in
+  rate). Requires audio routing — bundled with the virtual-mic
+  follow-up below.
+
+Deferred follow-ups (next slice candidates):
+- **Real virtual-mic mode** — set `cfg.audio.test_input_wav` to a
+  pre-recorded fixture loop (the M7B fixture-WAV mode already pumps
+  WAV through the production capture path). The driver picks
+  prompts → looks up the matching audio fixture → updates
+  `cfg.audio.test_input_wav` → triggers reload. Or simpler: a
+  PulseAudio `module-null-sink` + `module-loopback` route
+  pre-recorded audio at the OS level.
+- **`tools/acva-models recover` Python subcommand** — manual escape
+  hatch mirroring the soak driver's auto-restart logic. Trivial
+  follow-up; the soak driver already has the docker-compose-restart
+  flow.
+- **Histogram-bucket scrape** for P95 first-audio drift, fed into
+  the same gate.
+- **Time-series queue-depth slope check.**
+
+The dev-box 4-hour acceptance run is the headline gate — deferred
+to dogfood once the operator has dedicated workstation time. The
+harness produces the canonical `tests/soak/reports/<date>/`
+artifact for archival on a passing run.
+
+## Step 1 — Soak test infrastructure (original spec)
 
 **Files:**
 - `scripts/soak.sh` — runs the orchestrator + scripted user input for `$DURATION` (default 4 h).

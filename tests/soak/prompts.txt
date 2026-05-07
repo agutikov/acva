@@ -1,0 +1,36 @@
+# M8B Step 1 — soak driver prompt corpus.
+# Lines starting with '#' or empty lines are skipped by scripts/soak-driver.py.
+# Mix of question types (factual, conversational, creative, code, multilingual)
+# so the LLM exercises a varied prompt distribution. Keep prompts short — the
+# 4-hour soak is a leak/latency hunt, not a cognition test, and short prompts
+# pack more turns into the window.
+What's the weather like on Mars?
+Tell me a joke about programmers.
+What is the capital of France?
+Name three cities in Japan.
+Who wrote the play Hamlet?
+What's two plus two?
+Recommend a book about systems programming.
+Translate hello world into Spanish.
+What is HTTP and why does it matter?
+Explain in one sentence what a hash map is.
+What's the difference between a list and a tuple?
+Give me a one-line poem about the sea.
+What's a good way to learn a new language?
+What does the acronym GPU stand for?
+Name a famous mathematician from the 20th century.
+What's the boiling point of water in Celsius?
+How many continents are there?
+Suggest a name for a friendly robot.
+What is recursion in programming?
+Tell me a fun fact about octopuses.
+What is the speed of light?
+Describe a cumulus cloud in one sentence.
+What does CPU mean?
+What is photosynthesis?
+Recommend a vegetarian dinner.
+Sing me a one-line song.
+What is the chemical symbol for gold?
+Who painted the Mona Lisa?
+What does YAML stand for?
+Tell me one thing I should do today.
