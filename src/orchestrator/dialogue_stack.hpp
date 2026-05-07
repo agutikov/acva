@@ -4,6 +4,7 @@
 #include "dialogue/barge_in.hpp"
 #include "dialogue/fsm.hpp"
 #include "dialogue/manager.hpp"
+#include "dialogue/session.hpp"
 #include "dialogue/turn.hpp"
 #include "dialogue/turn_writer.hpp"
 #include "event/bus.hpp"
@@ -67,6 +68,7 @@ private:
         dialogue::Fsm&,
         supervisor::Supervisor&,
         dialogue::TurnFactory&,
+        dialogue::SessionManager&,
         const audio::Apm*,
         const std::shared_ptr<std::atomic<event::TurnId>>&,
         std::vector<event::SubscriptionHandle>&);
@@ -83,9 +85,13 @@ private:
     bool stopped_ = false;
 };
 
-// Build the dialogue stack. Opens a fresh memory session before
-// constructing the LLM-driven components. If the session insert fails,
-// returns the DbError; callers report and exit.
+// Build the dialogue stack. Registers Manager / TurnWriter /
+// Summarizer as SessionManager subscribers so they pick up the
+// initial session id and any subsequent /new-session or /wipe
+// rollovers. The caller is responsible for invoking
+// `sessions.open_initial()` AFTER this returns — that's when the
+// subscribers receive the first session id and the run is ready
+// to take traffic.
 //
 // `playback_active_turn` is shared with the TTS stack — Manager
 // updates it synchronously from its turn-started hook.
@@ -100,6 +106,7 @@ build_dialogue_stack(const config::Config& cfg,
                       dialogue::Fsm& fsm,
                       supervisor::Supervisor& sup,
                       dialogue::TurnFactory& turns,
+                      dialogue::SessionManager& sessions,
                       const audio::Apm* apm,
                       const std::shared_ptr<std::atomic<event::TurnId>>& playback_active_turn,
                       std::vector<event::SubscriptionHandle>& subscription_keepalive);

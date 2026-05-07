@@ -100,6 +100,16 @@ public:
     // pipeline worker thread.
     [[nodiscard]] Endpointer* endpointer() noexcept { return &endpointer_; }
 
+    // M8A Step 2 — privacy mute. When true, process_frame drains the
+    // ring (so the audio thread doesn't back-pressure) but performs
+    // no resampling, no APM, no VAD, no event publishing, and no
+    // streaming-STT push. Toggling on calls
+    // `endpointer_.force_endpoint(...)` from the next frame so any
+    // in-progress utterance closes cleanly. Toggling off resumes
+    // normal processing on the very next frame the worker pops.
+    void set_muted(bool m) noexcept { muted_.store(m, std::memory_order_release); }
+    [[nodiscard]] bool muted() const noexcept { return muted_.load(std::memory_order_acquire); }
+
     // For tests: drain the ring N times synchronously without spawning
     // the worker thread. Returns the number of frames processed.
     std::size_t pump_for_test(std::size_t max_frames);
@@ -139,6 +149,10 @@ private:
 
     std::thread       worker_;
     std::atomic<bool> running_{false};
+    std::atomic<bool> muted_{false};
+    // Latch the previous muted state so process_frame can detect the
+    // 0→1 transition and force-endpoint the in-progress utterance once.
+    bool prev_muted_ = false;
 
     std::atomic<std::uint64_t> frames_processed_{0};
     std::atomic<std::uint64_t> utterances_total_{0};

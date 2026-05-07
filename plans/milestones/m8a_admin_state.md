@@ -81,7 +81,64 @@ Trigger: `POST /reload` endpoint or `SIGHUP`.
 - `src/config/reload.hpp`, `src/config/reload.cpp`.
 - Add `Reloadable` interface implemented by components with hot-reloadable settings.
 
-## Step 2 — Privacy commands
+## Step 2 — Privacy commands — ✅ landed 2026-05-07
+
+Shipped:
+- `src/dialogue/session.{hpp,cpp}` — `SessionManager` owns the active
+  `memory::SessionId`, fans out id changes to registered subscribers
+  (Manager / TurnWriter / Summarizer), serialises rollover/wipe with an
+  internal mutex, and catches up late subscribers with the current id.
+  `open_initial`, `roll_over`, `wipe_session(id)` (rolls over if `id`
+  matches current), `wipe_all` (drops + recreates schema, opens fresh
+  session).
+- `Repository::delete_session(SessionId)` — single-row DELETE, FK
+  cascade clears turns + summaries, facts.source_turn_id goes NULL.
+  `Repository::wipe_all()` — single transaction: DROP every user-data
+  table + indexes, re-exec `kSchemaSql`. Idempotent.
+- `AudioPipeline::set_muted(bool)` + `muted()` accessor. process_frame
+  short-circuits when muted (drains the ring without resample / APM /
+  VAD / events / live STT sink); the 0→1 transition force-endpoints
+  the in-progress utterance and publishes SpeechEnded so consumers
+  see a clean close instead of a stuck Speaking state.
+- ControlServer: new `PrivacyHandlers` struct + four routes —
+  `POST /mute`, `POST /unmute`, `POST /new-session`,
+  `POST /wipe?session=<id>` / `POST /wipe?all=true`. Bare `POST /wipe`
+  with no qualifier returns 400 (intentional foot-gun guard); each
+  unconfigured handler returns 503; underlying DbErrors return 500
+  with the message JSON-escaped.
+- `dialogue_stack`: removed the inline `insert_session` call. The stack
+  now registers Manager / TurnWriter / Summarizer as SessionManager
+  subscribers; `main.cpp` constructs the SessionManager, hands it to
+  `build_dialogue_stack`, and calls `open_initial()` after the stack
+  returns so all three subscribers pick up the first id atomically.
+  Privacy closures in `main.cpp` capture the AudioPipeline via the
+  `capture` unique_ptr-by-reference (built post-control-plane) so
+  /mute calls into a live pipeline once one exists.
+- `acva demo wipe` — tmp DB + minimal control plane; inserts 1 session
+  + 3 turns; POST /wipe?session=N → cascade + rollover (sessions=1
+  turns=0); POST /wipe?all=true → schema reset + fresh session
+  (sessions=1 turns=0 summaries=0); POST /wipe (no qualifier) → 400.
+- Tests: 6 cases / 17 assertions in `tests/test_session_manager.cpp`
+  covering open_initial idempotency, rollover (close-prior + open-new
+  + notify), late-subscriber catch-up, wipe non-current keeps current,
+  wipe current rolls over, wipe_all clears tables and opens fresh.
+  Plus 2 cases in `tests/test_repository.cpp` for delete_session
+  cascade and wipe_all idempotency.
+
+Known v1 limitations:
+- Idle-timeout-driven rollover (default 30 min) is deferred — only the
+  explicit-command path is wired today. Adding it is a small cron-style
+  loop owned by SessionManager that calls `roll_over()` when
+  `(now - last_activity) > cfg.dialogue.session_idle_minutes`.
+- `audio_path`-based recording isn't implemented yet, so `/wipe` doesn't
+  delete on-disk audio. The hook lives in the schema (`turns.audio_path`)
+  for the future M8C self-listen / recording feature.
+- /mute when capture is disabled silently succeeds (the closure no-ops
+  when `capture` is null). A follow-up could return 503 instead — the
+  current behaviour matches the "muted = nothing happens" expectation
+  even when there's no microphone to suppress.
+
+## Step 2 — Privacy commands (original spec)
 
 Wire the remaining HTTP endpoints:
 

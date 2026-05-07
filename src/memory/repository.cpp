@@ -1,5 +1,7 @@
 #include "memory/repository.hpp"
 
+#include "memory/schema.hpp"
+
 #include <sqlite3.h>
 
 #include <algorithm>
@@ -82,6 +84,48 @@ Result<std::vector<SessionRow>> Repository::sessions_open_no_ended_at() {
 
 Result<std::vector<SessionRow>> Repository::sessions_open() {
     return sessions_open_no_ended_at();
+}
+
+std::optional<DbError> Repository::delete_session(SessionId id) {
+    Statement stmt(db_.raw(), "DELETE FROM sessions WHERE id = ?1;");
+    if (!stmt.ok()) return DbError{"prepare delete_session"};
+    stmt.bind(1, id);
+    if (stmt.step() != Statement::StepResult::Done) {
+        return DbError{"delete_session step"};
+    }
+    return std::nullopt;
+}
+
+std::optional<DbError> Repository::wipe_all() {
+    // Single-transaction wipe: drop all user-data tables and re-create
+    // the schema. The DROP order matters under foreign_keys=ON — drop
+    // the dependents (turns, summaries, facts) before sessions so the
+    // FK enforcement doesn't reject the parent's removal. settings is
+    // independent. We rely on the same kSchemaSql block the database
+    // uses on first open, so the result is byte-for-byte the cold
+    // schema.
+    Database::Transaction tx(db_, /*immediate*/ true);
+    constexpr const char* kDrop =
+        "DROP TABLE IF EXISTS facts;"
+        "DROP TABLE IF EXISTS summaries;"
+        "DROP TABLE IF EXISTS turns;"
+        "DROP TABLE IF EXISTS sessions;"
+        "DROP TABLE IF EXISTS settings;"
+        "DROP INDEX IF EXISTS idx_turns_session;"
+        "DROP INDEX IF EXISTS idx_summaries_session;"
+        "DROP INDEX IF EXISTS idx_facts_key;";
+    if (auto err = db_.exec(kDrop)) {
+        tx.rollback();
+        return err;
+    }
+    if (auto err = db_.exec(kSchemaSql)) {
+        tx.rollback();
+        return err;
+    }
+    if (auto err = tx.commit()) {
+        return err;
+    }
+    return std::nullopt;
 }
 
 // ----- turns -----

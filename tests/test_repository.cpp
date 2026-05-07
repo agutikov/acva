@@ -114,3 +114,73 @@ TEST_CASE("repo: settings get/set round-trip") {
     got = repo.get_setting("k");
     CHECK(*std::get<std::optional<std::string>>(got) == "v2");
 }
+
+TEST_CASE("repo: delete_session cascades to turns and summaries") {
+    auto p = tmp_db("delete-session");
+    auto db = open_or_die(p);
+    mem::Repository repo(db);
+
+    auto a = std::get<mem::SessionId>(repo.insert_session(mem::now_ms(), std::nullopt));
+    auto b = std::get<mem::SessionId>(repo.insert_session(mem::now_ms(), std::nullopt));
+
+    // Three turns split across the two sessions.
+    (void)repo.insert_turn(a, mem::TurnRole::User, std::string("hi"),
+                            std::string("en"), mem::now_ms(),
+                            mem::TurnStatus::Committed);
+    (void)repo.insert_turn(a, mem::TurnRole::Assistant, std::string("hello"),
+                            std::string("en"), mem::now_ms(),
+                            mem::TurnStatus::Committed);
+    (void)repo.insert_turn(b, mem::TurnRole::User, std::string("bye"),
+                            std::string("en"), mem::now_ms(),
+                            mem::TurnStatus::Committed);
+
+    // One summary on session a.
+    (void)repo.insert_summary(a, /*range_start*/ 1, /*range_end*/ 2,
+                               "summary text", "en", "deadbeef", mem::now_ms());
+
+    auto err = repo.delete_session(a);
+    CHECK_FALSE(err.has_value());
+
+    // Session a's two turns are gone; b's one turn survives.
+    auto a_turns = repo.recent_turns(a, 100);
+    REQUIRE(std::holds_alternative<std::vector<mem::TurnRow>>(a_turns));
+    CHECK(std::get<std::vector<mem::TurnRow>>(a_turns).empty());
+
+    auto b_turns = repo.recent_turns(b, 100);
+    REQUIRE(std::holds_alternative<std::vector<mem::TurnRow>>(b_turns));
+    CHECK(std::get<std::vector<mem::TurnRow>>(b_turns).size() == 1);
+
+    // Session a's summary is gone.
+    auto a_sum = repo.latest_summary(a);
+    REQUIRE(std::holds_alternative<std::optional<mem::SummaryRow>>(a_sum));
+    CHECK_FALSE(std::get<std::optional<mem::SummaryRow>>(a_sum).has_value());
+}
+
+TEST_CASE("repo: wipe_all empties everything and is idempotent") {
+    auto p = tmp_db("wipe-all");
+    auto db = open_or_die(p);
+    mem::Repository repo(db);
+
+    auto sid = std::get<mem::SessionId>(repo.insert_session(mem::now_ms(), std::nullopt));
+    (void)repo.insert_turn(sid, mem::TurnRole::User, std::string("hi"),
+                            std::string("en"), mem::now_ms(),
+                            mem::TurnStatus::Committed);
+    (void)repo.set_setting("k", "v", mem::now_ms());
+
+    CHECK_FALSE(repo.wipe_all().has_value());
+
+    auto opens = repo.sessions_open();
+    REQUIRE(std::holds_alternative<std::vector<mem::SessionRow>>(opens));
+    CHECK(std::get<std::vector<mem::SessionRow>>(opens).empty());
+
+    auto setting = repo.get_setting("k");
+    REQUIRE(std::holds_alternative<std::optional<std::string>>(setting));
+    CHECK_FALSE(std::get<std::optional<std::string>>(setting).has_value());
+
+    // Idempotent: a second wipe on the now-empty schema also succeeds.
+    CHECK_FALSE(repo.wipe_all().has_value());
+
+    // Schema is intact after wipe — we can insert a new session.
+    auto sid2_or = repo.insert_session(mem::now_ms(), std::nullopt);
+    REQUIRE(std::holds_alternative<mem::SessionId>(sid2_or));
+}

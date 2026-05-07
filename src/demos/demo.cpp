@@ -27,10 +27,11 @@ int run_stt       (const config::Config&, std::span<const std::string>);
 int run_tone      (const config::Config&, std::span<const std::string>);
 int run_transcribe(const config::Config&, std::span<const std::string>);
 int run_tts       (const config::Config&, std::span<const std::string>);
+int run_wipe      (const config::Config&, std::span<const std::string>);
 
 namespace {
 
-constexpr std::array<Demo, 18> kDemos{{
+constexpr std::array<Demo, 19> kDemos{{
     {"fsm",      "M0",
      "synthetic FSM driver runs 3 turns end-to-end (no backends needed)",
      run_fsm},
@@ -85,6 +86,9 @@ constexpr std::array<Demo, 18> kDemos{{
     {"reload",   "M8A",
      "POST /reload roundtrip — hot field accepted, restart-required rejected, parse error reported",
      run_reload},
+    {"wipe",     "M8A",
+     "POST /wipe?session + /wipe?all=true roundtrip on a tmp DB — verifies cascade + rollover",
+     run_wipe},
 }};
 
 } // namespace

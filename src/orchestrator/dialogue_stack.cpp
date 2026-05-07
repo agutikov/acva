@@ -37,6 +37,7 @@ build_dialogue_stack(const config::Config& cfg,
                       dialogue::Fsm& fsm,
                       supervisor::Supervisor& sup,
                       dialogue::TurnFactory& turns,
+                      dialogue::SessionManager& sessions,
                       const audio::Apm* apm,
                       const std::shared_ptr<std::atomic<event::TurnId>>& playback_active_turn,
                       std::vector<event::SubscriptionHandle>& subscription_keepalive) {
@@ -64,19 +65,12 @@ build_dialogue_stack(const config::Config& cfg,
         return stack;     // .has_llm() == false
     }
 
-    // Open a fresh memory session before constructing the LLM-driven
-    // components. Without this, every dialogue turn fails to write
-    // back into memory.
-    auto sid_or = memory.read([](memory::Repository& repo) {
-        return repo.insert_session(memory::now_ms(), std::nullopt);
-    });
-    if (auto* err = std::get_if<memory::DbError>(&sid_or)) {
-        return *err;
-    }
-    const auto session_id = std::get<memory::SessionId>(sid_or);
-    log::event("main", "session_opened", event::kNoTurn,
-               {{"session_id", std::to_string(session_id)}});
-
+    // Construct the LLM-driven components before the SessionManager
+    // sub-registration so the subscriber lambdas don't need to chase
+    // a forward-declared `stack`. The actual session row gets opened
+    // by the caller (main.cpp) via `sessions.open_initial()` AFTER
+    // build_dialogue_stack returns — that's when these subscribers
+    // pick up the id.
     stack->prompt_builder_ = std::make_unique<llm::PromptBuilder>(cfg, memory);
     stack->llm_client_     = std::make_unique<llm::LlmClient>(cfg, bus);
     stack->manager_        = std::make_unique<dialogue::Manager>(
@@ -84,9 +78,19 @@ build_dialogue_stack(const config::Config& cfg,
     stack->turn_writer_    = std::make_unique<dialogue::TurnWriter>(bus, memory);
     stack->summarizer_     = std::make_unique<memory::Summarizer>(
         cfg, bus, memory, *stack->llm_client_);
-    stack->manager_->set_session(session_id);
-    stack->turn_writer_->set_session(session_id);
-    stack->summarizer_->set_session(session_id);
+
+    sessions.register_subscriber("manager",
+        [m = stack->manager_.get()](memory::SessionId sid) {
+            m->set_session(sid);
+        });
+    sessions.register_subscriber("turn_writer",
+        [tw = stack->turn_writer_.get()](memory::SessionId sid) {
+            tw->set_session(sid);
+        });
+    sessions.register_subscriber("summarizer",
+        [su = stack->summarizer_.get()](memory::SessionId sid) {
+            su->set_session(sid);
+        });
 
     // M2: pipeline gating + LLM keep-alive. The gate refuses new
     // turns when the supervisor reports pipeline_state==Failed; the

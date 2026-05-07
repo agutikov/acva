@@ -41,11 +41,31 @@ public:
     // serialisation).
     using ReloadHandler = std::function<config::ReloadResult()>;
 
+    // M8A Step 2 — privacy command handlers. Each closure converts
+    // its underlying component (AudioPipeline mute flag, SessionManager
+    // operations) into a flat shape so the server header stays free
+    // of audio/memory dependencies. Any handler may be empty; routes
+    // that depend on an empty handler return 503.
+    struct PrivacyHandlers {
+        // POST /mute  → set_muted(true);  POST /unmute → set_muted(false).
+        std::function<void(bool)> set_muted;
+        // POST /new-session: success → int64 (new session id);
+        //                     failure → string (error message).
+        std::function<std::variant<std::int64_t, std::string>()> new_session;
+        // POST /wipe?session=<id>: success → empty optional;
+        //                          failure → optional<string> (error message).
+        std::function<std::optional<std::string>(std::int64_t)> wipe_session;
+        // POST /wipe?all=true: same shape as new_session — returns the
+        // freshly opened session id on success.
+        std::function<std::variant<std::int64_t, std::string>()> wipe_all;
+    };
+
     ControlServer(const config::ControlConfig& cfg,
                   std::shared_ptr<metrics::Registry> registry,
                   const dialogue::Fsm* fsm,
                   StatusExtra status_extra = {},
-                  ReloadHandler reload_handler = {});
+                  ReloadHandler reload_handler = {},
+                  PrivacyHandlers privacy = {});
     ~ControlServer();
 
     ControlServer(const ControlServer&) = delete;
@@ -62,6 +82,7 @@ private:
     const dialogue::Fsm* fsm_; // not owned; nullable
     StatusExtra status_extra_;
     ReloadHandler reload_handler_;
+    PrivacyHandlers privacy_;
     std::unique_ptr<Impl> impl_;
     int bound_port_ = 0;
 };

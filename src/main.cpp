@@ -3,6 +3,7 @@
 #include "config/reload.hpp"
 #include "demos/demo.hpp"
 #include "dialogue/fsm.hpp"
+#include "dialogue/session.hpp"
 #include "dialogue/turn.hpp"
 #include "event/bus.hpp"
 #include "event/event.hpp"
@@ -166,6 +167,15 @@ int main(int argc, char** argv) {
             s.summaries_stale, s.summaries_total));
     }
 
+    // M8A Step 2 — SessionManager owns the active session id and
+    // fans out /new-session + /wipe rollovers to every registered
+    // subscriber (Manager, TurnWriter, Summarizer). Constructed
+    // BEFORE the dialogue stack so the stack can register its
+    // consumers; the actual `open_initial()` call runs AFTER the
+    // dialogue stack returns so all three subscribers pick up the
+    // first id.
+    acva::dialogue::SessionManager sessions(*memory);
+
     acva::dialogue::TurnFactory turns;
     acva::dialogue::Fsm fsm(bus, turns);
     fsm.set_turn_outcome_observer([registry](const char* outcome) {
@@ -243,13 +253,47 @@ int main(int argc, char** argv) {
         return reloader.reload();
     };
 
-    // HTTP control plane (/metrics, /status, /health, POST /reload).
+    // M8A Step 2 — privacy handlers. The mute closure captures the
+    // capture-stack unique_ptr by reference because capture is built
+    // BELOW; until then the pointer is null and POST /mute returns
+    // a clear "capture not configured" rather than crashing. The
+    // session/wipe closures capture the SessionManager directly.
+    acva::http::ControlServer::PrivacyHandlers privacy{};
+    privacy.set_muted = [&capture](bool m) {
+        if (!capture) return;
+        if (auto* ap = capture->pipeline(); ap != nullptr) {
+            ap->set_muted(m);
+            acva::log::info("privacy", m ? "muted" : "unmuted");
+        }
+    };
+    privacy.new_session = [&sessions]() -> std::variant<std::int64_t, std::string> {
+        auto r = sessions.roll_over();
+        if (auto* err = std::get_if<acva::memory::DbError>(&r)) {
+            return err->message;
+        }
+        return std::get<acva::memory::SessionId>(r);
+    };
+    privacy.wipe_session = [&sessions](std::int64_t id) -> std::optional<std::string> {
+        auto err = sessions.wipe_session(id);
+        if (err.has_value()) return err->message;
+        return std::nullopt;
+    };
+    privacy.wipe_all = [&sessions]() -> std::variant<std::int64_t, std::string> {
+        auto r = sessions.wipe_all();
+        if (auto* err = std::get_if<acva::memory::DbError>(&r)) {
+            return err->message;
+        }
+        return std::get<acva::memory::SessionId>(r);
+    };
+
+    // HTTP control plane (/metrics, /status, /health, POST /reload,
+    // /mute /unmute /new-session /wipe).
     std::unique_ptr<acva::http::ControlServer> control;
     try {
         control = std::make_unique<acva::http::ControlServer>(
             cfg.control, registry, &fsm,
             acva::orchestrator::make_status_extra(supervisor, capture),
-            run_reload);
+            run_reload, std::move(privacy));
     } catch (const std::exception& ex) {
         acva::log::error("main", fmt::format("control server failed to start: {}", ex.what()));
         supervisor.stop();
@@ -328,15 +372,32 @@ int main(int argc, char** argv) {
     const acva::audio::Apm* apm_for_barge_in =
         audio_pipeline ? audio_pipeline->apm() : nullptr;
     auto dialogue_or = acva::orchestrator::build_dialogue_stack(
-        cfg, bus, registry, *memory, fsm, supervisor, turns,
+        cfg, bus, registry, *memory, fsm, supervisor, turns, sessions,
         apm_for_barge_in, playback_active_turn, metric_subs);
     if (auto* err = std::get_if<acva::memory::DbError>(&dialogue_or)) {
-        acva::log::error("main", fmt::format("session insert failed: {}", err->message));
+        acva::log::error("main", fmt::format("dialogue stack failed: {}", err->message));
         fsm.stop();
         bus.shutdown();
         return EXIT_FAILURE;
     }
     auto dialogue = std::move(std::get<std::unique_ptr<acva::orchestrator::DialogueStack>>(dialogue_or));
+
+    // Open the initial session — the dialogue stack registered Manager,
+    // TurnWriter, and Summarizer as SessionManager subscribers above; this
+    // call fans out the first session id to all three before traffic flows.
+    // Skipped when the LLM stack is disabled (synthetic-only fake-driver
+    // runs don't write to memory).
+    if (dialogue->has_llm()) {
+        auto sid_or = sessions.open_initial();
+        if (auto* err = std::get_if<acva::memory::DbError>(&sid_or)) {
+            acva::log::error("main",
+                fmt::format("session open failed: {}", err->message));
+            dialogue->stop();
+            fsm.stop();
+            bus.shutdown();
+            return EXIT_FAILURE;
+        }
+    }
 
     // M7 — wire BargeInDetector → PlaybackEngine and start it. The
     // detector's on_fired callback runs on its bus subscription

@@ -95,6 +95,27 @@ std::size_t AudioPipeline::pump_for_test(std::size_t max_frames) {
 void AudioPipeline::process_frame(const AudioFrame& frame) {
     frames_processed_.fetch_add(1, std::memory_order_relaxed);
 
+    // M8A Step 2 — /mute. When muted, drain the ring without doing
+    // any work downstream. On the 0→1 transition we force-endpoint
+    // any in-progress utterance so consumers (UtteranceBuffer, STT,
+    // FSM) see a clean SpeechEnded instead of a stuck Speaking state.
+    const bool now_muted = muted_.load(std::memory_order_acquire);
+    if (now_muted) {
+        if (!prev_muted_) {
+            const auto outcome = endpointer_.force_endpoint(frame.captured_at);
+            if (outcome == Endpointer::FrameOutcome::SpeechEnded) {
+                bus_.publish(event::SpeechEnded{
+                    .turn = event::kNoTurn,
+                    .ts   = frame.captured_at,
+                });
+                in_speech_ = false;
+            }
+        }
+        prev_muted_ = true;
+        return;
+    }
+    prev_muted_ = false;
+
     auto resampled = resampler_.process(frame.view());
     if (resampled.empty()) return;
 

@@ -33,10 +33,12 @@ add_library(acva_core STATIC
     demos/transcribe.cpp
     demos/tts.cpp
     demos/wedge.cpp
+    demos/wipe.cpp
     dialogue/barge_in.cpp
     dialogue/fsm.cpp
     dialogue/manager.cpp
     dialogue/sentence_splitter.cpp
+    dialogue/session.cpp
     dialogue/tts_bridge.cpp
     dialogue/turn.cpp
     dialogue/turn_writer.cpp

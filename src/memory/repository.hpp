@@ -85,6 +85,18 @@ public:
     [[nodiscard]] Result<std::vector<SessionRow>> sessions_open();
     [[nodiscard]] Result<std::vector<SessionRow>> sessions_open_no_ended_at();
 
+    // M8A — privacy commands. delete_session removes one session row;
+    // turns + summaries cascade via the FK definitions in
+    // memory/schema.hpp, and facts.source_turn_id goes NULL via the
+    // turns→facts ON DELETE SET NULL link (the fact rows themselves
+    // stay — `wipe_all` is the one that drops everything).
+    [[nodiscard]] std::optional<DbError> delete_session(SessionId id);
+
+    // M8A — drops every user-data table and re-creates the schema in a
+    // single transaction. Settings rows go too. Idempotent: safe to
+    // call against an empty DB.
+    [[nodiscard]] std::optional<DbError> wipe_all();
+
     // ----- turns -----
     [[nodiscard]] Result<TurnId> insert_turn(SessionId session, TurnRole role,
                                               std::optional<std::string> text,

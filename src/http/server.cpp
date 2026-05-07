@@ -116,11 +116,13 @@ ControlServer::ControlServer(const config::ControlConfig& cfg,
                              std::shared_ptr<metrics::Registry> registry,
                              const dialogue::Fsm* fsm,
                              StatusExtra status_extra,
-                             ReloadHandler reload_handler)
+                             ReloadHandler reload_handler,
+                             PrivacyHandlers privacy)
     : registry_(std::move(registry)),
       fsm_(fsm),
       status_extra_(std::move(status_extra)),
       reload_handler_(std::move(reload_handler)),
+      privacy_(std::move(privacy)),
       impl_(std::make_unique<Impl>()) {
 
     auto& server = impl_->server;
@@ -178,6 +180,142 @@ ControlServer::ControlServer(const config::ControlConfig& cfg,
                 res.set_content(R"({"status":"internal_error"})" "\n",
                                 "application/json");
             }
+        });
+
+    // ----- M8A Step 2: privacy commands -----
+
+    auto set_muted_handler = privacy_.set_muted;
+    auto mute_route = [set_muted_handler](bool target,
+                                            httplib::Response& res) {
+        if (!set_muted_handler) {
+            res.status = 503;
+            res.set_content(R"({"error":"mute not configured"})" "\n",
+                            "application/json");
+            return;
+        }
+        set_muted_handler(target);
+        res.status = 200;
+        res.set_content(
+            fmt::format(R"({{"status":"ok","muted":{}}})" "\n",
+                        target ? "true" : "false"),
+            "application/json");
+    };
+    server.Post("/mute",   [mute_route](const httplib::Request&, httplib::Response& res) {
+        mute_route(true, res);
+    });
+    server.Post("/unmute", [mute_route](const httplib::Request&, httplib::Response& res) {
+        mute_route(false, res);
+    });
+
+    server.Post("/new-session",
+        [handler = privacy_.new_session]
+        (const httplib::Request&, httplib::Response& res) {
+            if (!handler) {
+                res.status = 503;
+                res.set_content(R"({"error":"new-session not configured"})" "\n",
+                                "application/json");
+                return;
+            }
+            const auto result = handler();
+            if (auto* sid = std::get_if<std::int64_t>(&result)) {
+                res.status = 200;
+                res.set_content(
+                    fmt::format(R"({{"status":"ok","session_id":{}}})" "\n", *sid),
+                    "application/json");
+            } else {
+                res.status = 500;
+                res.set_content(
+                    fmt::format(R"({{"status":"error","error":{}}})" "\n",
+                                escape_json(std::get<std::string>(result))),
+                    "application/json");
+            }
+        });
+
+    // POST /wipe — distinguishes session vs all by query parameter.
+    // - ?session=<id>  → wipe one session (and roll over if active).
+    // - ?all=true      → wipe everything and open a fresh session.
+    // Missing both is a 400 to keep the endpoint from being a footgun
+    // ("POST /wipe" with no qualifier should not nuke the whole DB).
+    server.Post("/wipe",
+        [wipe_session = privacy_.wipe_session,
+         wipe_all     = privacy_.wipe_all]
+        (const httplib::Request& req, httplib::Response& res) {
+            const bool has_all     = req.has_param("all");
+            const bool has_session = req.has_param("session");
+
+            if (has_all) {
+                if (req.get_param_value("all") != "true") {
+                    res.status = 400;
+                    res.set_content(
+                        R"({"error":"all must be exactly 'true'"})" "\n",
+                        "application/json");
+                    return;
+                }
+                if (!wipe_all) {
+                    res.status = 503;
+                    res.set_content(
+                        R"({"error":"wipe-all not configured"})" "\n",
+                        "application/json");
+                    return;
+                }
+                const auto result = wipe_all();
+                if (auto* sid = std::get_if<std::int64_t>(&result)) {
+                    res.status = 200;
+                    res.set_content(
+                        fmt::format(
+                            R"({{"status":"ok","scope":"all","session_id":{}}})" "\n",
+                            *sid),
+                        "application/json");
+                } else {
+                    res.status = 500;
+                    res.set_content(
+                        fmt::format(R"({{"status":"error","error":{}}})" "\n",
+                                    escape_json(std::get<std::string>(result))),
+                        "application/json");
+                }
+                return;
+            }
+
+            if (has_session) {
+                if (!wipe_session) {
+                    res.status = 503;
+                    res.set_content(
+                        R"({"error":"wipe-session not configured"})" "\n",
+                        "application/json");
+                    return;
+                }
+                std::int64_t target = 0;
+                try {
+                    target = std::stoll(req.get_param_value("session"));
+                } catch (...) {
+                    res.status = 400;
+                    res.set_content(
+                        R"({"error":"session must be an integer"})" "\n",
+                        "application/json");
+                    return;
+                }
+                const auto err = wipe_session(target);
+                if (!err.has_value()) {
+                    res.status = 200;
+                    res.set_content(
+                        fmt::format(
+                            R"({{"status":"ok","scope":"session","session_id":{}}})" "\n",
+                            target),
+                        "application/json");
+                } else {
+                    res.status = 500;
+                    res.set_content(
+                        fmt::format(R"({{"status":"error","error":{}}})" "\n",
+                                    escape_json(*err)),
+                        "application/json");
+                }
+                return;
+            }
+
+            res.status = 400;
+            res.set_content(
+                R"({"error":"specify ?session=<id> or ?all=true"})" "\n",
+                "application/json");
         });
 
     if (!server.bind_to_port(cfg.bind, cfg.port)) {
