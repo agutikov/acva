@@ -1,4 +1,4 @@
-#include "orchestrator/event_tracer.hpp"
+#include "orchestrator/observability/event_tracer.hpp"
 
 #include "event/event.hpp"
 #include "log/log.hpp"

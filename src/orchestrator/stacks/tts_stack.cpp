@@ -1,4 +1,4 @@
-#include "orchestrator/tts_stack.hpp"
+#include "orchestrator/stacks/tts_stack.hpp"
 
 #include "audio/resampler.hpp"
 #include "audio/utterance.hpp"

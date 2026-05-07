@@ -58,15 +58,23 @@ add_library(acva_core STATIC
     memory/repository.cpp
     memory/summarizer.cpp
     metrics/registry.cpp
-    orchestrator/bootstrap.cpp
-    orchestrator/capture_stack.cpp
-    orchestrator/dialogue_stack.cpp
-    orchestrator/event_tracer.cpp
-    orchestrator/status_extra.cpp
-    orchestrator/stt_stack.cpp
-    orchestrator/supervisor_setup.cpp
-    orchestrator/system_aec.cpp
-    orchestrator/tts_stack.cpp
+    orchestrator/admin/privacy_handlers.cpp
+    orchestrator/admin/reload_setup.cpp
+    orchestrator/admin/restart_driver.cpp
+    orchestrator/admin/session_resume.cpp
+    orchestrator/boot/bootstrap.cpp
+    orchestrator/boot/model_controller_handoff.cpp
+    orchestrator/boot/startup_runner.cpp
+    orchestrator/boot/system_aec.cpp
+    orchestrator/io/stdin_reader.cpp
+    orchestrator/observability/barge_in_metrics.cpp
+    orchestrator/observability/event_tracer.cpp
+    orchestrator/observability/status_extra.cpp
+    orchestrator/observability/supervisor_setup.cpp
+    orchestrator/stacks/capture_stack.cpp
+    orchestrator/stacks/dialogue_stack.cpp
+    orchestrator/stacks/stt_stack.cpp
+    orchestrator/stacks/tts_stack.cpp
     pipeline/fake_driver.cpp
     playback/engine.cpp
     playback/queue.cpp

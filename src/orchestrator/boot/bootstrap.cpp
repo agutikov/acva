@@ -1,4 +1,4 @@
-#include "orchestrator/bootstrap.hpp"
+#include "orchestrator/boot/bootstrap.hpp"
 
 #include "config/paths.hpp"
 #include "log/log.hpp"

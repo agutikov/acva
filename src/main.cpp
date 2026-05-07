@@ -2,7 +2,6 @@
 #include "cli/memory_cli.hpp"
 #include "config/config.hpp"
 #include "config/paths.hpp"
-#include "config/reload.hpp"
 #include "demos/demo.hpp"
 #include "dialogue/fsm.hpp"
 #include "dialogue/session.hpp"
@@ -15,20 +14,26 @@
 #include "memory/recovery.hpp"
 #include "memory/repository.hpp"
 #include "metrics/registry.hpp"
-#include "orchestrator/bootstrap.hpp"
-#include "orchestrator/capture_stack.hpp"
-#include "orchestrator/dialogue_stack.hpp"
-#include "orchestrator/event_tracer.hpp"
-#include "orchestrator/status_extra.hpp"
-#include "orchestrator/stt_stack.hpp"
-#include "orchestrator/supervisor_setup.hpp"
-#include "orchestrator/system_aec.hpp"
-#include "orchestrator/tts_stack.hpp"
+#include "orchestrator/observability/barge_in_metrics.hpp"
+#include "orchestrator/boot/bootstrap.hpp"
+#include "orchestrator/stacks/capture_stack.hpp"
+#include "orchestrator/stacks/dialogue_stack.hpp"
+#include "orchestrator/observability/event_tracer.hpp"
+#include "orchestrator/boot/model_controller_handoff.hpp"
+#include "orchestrator/admin/privacy_handlers.hpp"
+#include "orchestrator/admin/reload_setup.hpp"
+#include "orchestrator/admin/restart_driver.hpp"
+#include "orchestrator/admin/session_resume.hpp"
+#include "orchestrator/boot/startup_runner.hpp"
+#include "orchestrator/observability/status_extra.hpp"
+#include "orchestrator/io/stdin_reader.hpp"
+#include "orchestrator/stacks/stt_stack.hpp"
+#include "orchestrator/observability/supervisor_setup.hpp"
+#include "orchestrator/boot/system_aec.hpp"
+#include "orchestrator/stacks/tts_stack.hpp"
 #include "audio/apm.hpp"
 #include "audio/pipeline.hpp"
-#include "llm/model_controller_client.hpp"
 #include "stt/openai_stt_client.hpp"
-#include "supervisor/startup_check.hpp"
 #include "supervisor/supervisor.hpp"
 #include "supervisor/watchdog.hpp"
 
@@ -37,13 +42,11 @@
 
 #include <atomic>
 #include <chrono>
-#include <csignal>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
-#include <thread>
 #include <variant>
 
 int main(int argc, char** argv) {
@@ -82,7 +85,7 @@ int main(int argc, char** argv) {
     acva::log::info("main", fmt::format("memory db: {}", cfg.memory.db_path));
     acva::orchestrator::install_alsa_sidestep(cfg.audio);
 
-    // Validate --stdin-lang against the configured maps.  Empty maps
+    // Validate --stdin-lang against the configured maps. Empty maps
     // mean the feature is not configured (early-bring-up state) — only
     // gate when a map has entries at all, mirroring config::validate.
     if (args.stdin_mode && !args.stdin_lang.empty()) {
@@ -111,54 +114,21 @@ int main(int argc, char** argv) {
 
     // RAII: optionally load PipeWire's module-echo-cancel and route
     // this process through it (set PULSE_SINK / PULSE_SOURCE before
-    // any PortAudio init).  No-op when cfg.apm.use_system_aec=false.
+    // any PortAudio init). No-op when cfg.apm.use_system_aec=false.
     // Lives at function scope so its destructor unloads the module on
     // exit (including the demo short-circuit below).
     acva::orchestrator::SystemAec system_aec(cfg.apm);
     if (const auto& err = system_aec.startup_error()) {
-        // System-AEC setup failed in a way that would cause silent
-        // misrouting. Refuse to start rather than fall back — see the
-        // failure-modes block in system_aec.hpp.
         std::cerr << "acva: system AEC setup failed: " << *err << "\n";
         return EXIT_FAILURE;
     }
 
-    // ----- M8A Step 5: model-controller hand-off -----
-    // When the operator has wired the controller sidecar (see
-    // packaging/model-controller/) and `cfg.llm.model_file` differs
-    // from what's currently loaded, we ask the sidecar to recreate
-    // llama with the requested GGUF before we touch any backend.
-    // Skipped when `model_controller_url` is empty — the M0…M7 dev
-    // path keeps using `ACVA_LLM_MODEL` in compose .env directly.
-    if (!cfg.llm.model_controller_url.empty()
-        && !cfg.llm.model_file.empty()) {
-        acva::llm::ModelControllerClient mcc(cfg.llm.model_controller_url);
-        const auto cur = mcc.status();
-        const std::string cur_loaded =
-            std::holds_alternative<acva::llm::ControllerStatus>(cur)
-                ? std::get<acva::llm::ControllerStatus>(cur).loaded_file
-                : std::string{};
-        if (cur_loaded != cfg.llm.model_file) {
-            acva::log::info("main", fmt::format(
-                "model-controller: requesting {} (current: '{}')",
-                cfg.llm.model_file, cur_loaded));
-            auto load_res = mcc.load(cfg.llm.model_file, std::chrono::seconds(60));
-            if (auto* err = std::get_if<acva::llm::ClientError>(&load_res)) {
-                if (cfg.supervisor.strict_startup) {
-                    std::cerr << "acva: model-controller load failed: "
-                              << err->message << "\n";
-                    return EXIT_FAILURE;
-                }
-                acva::log::warn("main", fmt::format(
-                    "model-controller load failed (continuing in tolerant mode): {}",
-                    err->message));
-            } else {
-                const auto& s = std::get<acva::llm::ControllerStatus>(load_res);
-                acva::log::info("main", fmt::format(
-                    "model-controller: now serving {} ({})",
-                    s.loaded_file, s.health));
-            }
-        }
+    // M8A Step 5 — model-controller hand-off. No-op unless the
+    // operator wired up the sidecar. Returns false ONLY under
+    // strict_startup with a real failure; tolerant mode logs +
+    // continues.
+    if (!acva::orchestrator::run_model_controller_handoff(cfg)) {
+        return EXIT_FAILURE;
     }
 
     // ----- 2.5. Demo subcommand short-circuit -----
@@ -185,7 +155,6 @@ int main(int argc, char** argv) {
     // Production-only periodic VRAM probe. Spawned AFTER the demo
     // dispatch above — demos do their own VRAM probing and a joinable
     // thread destructor on demo-return would call std::terminate.
-    // RAII: stops + joins on destruction at end of main.
     acva::orchestrator::VramMonitor vram_monitor(cfg.logging);
 
     // ----- 3. Build the runtime -----
@@ -225,9 +194,9 @@ int main(int argc, char** argv) {
     // fans out /new-session + /wipe rollovers to every registered
     // subscriber (Manager, TurnWriter, Summarizer). Constructed
     // BEFORE the dialogue stack so the stack can register its
-    // consumers; the actual `open_initial()` call runs AFTER the
-    // dialogue stack returns so all three subscribers pick up the
-    // first id.
+    // consumers; the actual open / adopt / open_initial call runs
+    // AFTER the dialogue stack returns so all three subscribers
+    // pick up the first id in one fan-out.
     acva::dialogue::SessionManager sessions(*memory);
 
     acva::dialogue::TurnFactory turns;
@@ -280,95 +249,34 @@ int main(int argc, char** argv) {
     // up its value lazily on every /status hit.
     std::unique_ptr<acva::orchestrator::CaptureStack> capture;
 
-    // M8A — config hot-reload. ConfigReloader holds a non-owning ref
-    // to the live `cfg` and applies hot-class diffs in place; the
-    // mutex inside Reload + the per-component callbacks (logger,
-    // endpointer) keep concurrent readers safe. Built before the
-    // ControlServer so we can hand its reload() closure as a request
-    // handler, and re-registered post-capture below so the endpointer
-    // callback can capture a real Endpointer pointer.
-    acva::config::ConfigReloader reloader(cfg, config_path);
-    std::mutex reload_mtx; // serialise SIGHUP and HTTP-driven reloads
+    // M8A Step 1 — config hot-reload. Owns the ConfigReloader + the
+    // mutex serialising HTTP-driven reloads against SIGHUP-driven
+    // ones. The endpointer callback is registered later (post-capture)
+    // when its target Endpointer pointer is known.
+    acva::orchestrator::ReloadSetup reload(cfg, config_path);
+    reload.register_log_callback();
+    auto run_reload = reload.run_reload();
 
-    reloader.register_callback("log",
-        [](const acva::config::Config& live,
-           const acva::config::ReloadDiff& diff) {
-            for (const auto& f : diff.changed_hot) {
-                if (f == "logging.level") {
-                    acva::log::set_level(live.logging.level);
-                    acva::log::info("config", fmt::format(
-                        "logging.level → {}", live.logging.level));
-                }
-            }
-        });
+    // M8A Step 4 — warm-restart request flag with built-in 5 s
+    // debounce. /restart and the Watchdog auto-restart both call
+    // requester.request(); the main loop drains is_requested().
+    acva::orchestrator::RestartRequester restart_requester;
 
-    auto run_reload = [&reloader, &reload_mtx]() {
-        std::lock_guard lk(reload_mtx);
-        return reloader.reload();
-    };
-
-    // M8A Step 4 — warm restart request flag + debounce. The
-    // /restart handler (and the watchdog's auto_restart_on_stuck path)
-    // call request_restart() to flip a flag that the main loop drains.
-    // request_restart returns nullopt (accepted) or a reason string
-    // (rejected). 5 s debounce prevents a flapping watchdog from
-    // entering an exec loop.
-    std::atomic<bool> restart_requested{false};
-    std::atomic<std::int64_t> last_restart_request_ms{0};
-    auto request_restart = [&restart_requested,
-                             &last_restart_request_ms]() -> std::optional<std::string> {
-        const auto now = acva::memory::now_ms();
-        const auto last = last_restart_request_ms.load(std::memory_order_acquire);
-        if (last != 0 && (now - last) < 5000) {
-            return fmt::format("debounced; previous request {} ms ago", now - last);
-        }
-        last_restart_request_ms.store(now, std::memory_order_release);
-        restart_requested.store(true, std::memory_order_release);
-        acva::log::info("main", "restart requested");
-        return std::nullopt;
-    };
-
-    // M8A Step 2 — privacy handlers. The mute closure captures the
-    // capture-stack unique_ptr by reference because capture is built
-    // BELOW; until then the pointer is null and POST /mute returns
-    // a clear "capture not configured" rather than crashing. The
-    // session/wipe closures capture the SessionManager directly.
-    acva::http::ControlServer::PrivacyHandlers privacy{};
-    privacy.set_muted = [&capture](bool m) {
-        if (!capture) return;
-        if (auto* ap = capture->pipeline(); ap != nullptr) {
-            ap->set_muted(m);
-            acva::log::info("privacy", m ? "muted" : "unmuted");
-        }
-    };
-    privacy.new_session = [&sessions]() -> std::variant<std::int64_t, std::string> {
-        auto r = sessions.roll_over();
-        if (auto* err = std::get_if<acva::memory::DbError>(&r)) {
-            return err->message;
-        }
-        return std::get<acva::memory::SessionId>(r);
-    };
-    privacy.wipe_session = [&sessions](std::int64_t id) -> std::optional<std::string> {
-        auto err = sessions.wipe_session(id);
-        if (err.has_value()) return err->message;
-        return std::nullopt;
-    };
-    privacy.wipe_all = [&sessions]() -> std::variant<std::int64_t, std::string> {
-        auto r = sessions.wipe_all();
-        if (auto* err = std::get_if<acva::memory::DbError>(&r)) {
-            return err->message;
-        }
-        return std::get<acva::memory::SessionId>(r);
-    };
+    // M8A Step 2 — privacy handlers. The mute closure captures
+    // `capture` by reference because the capture stack is built
+    // BELOW; until then /mute is a no-op log line.
+    auto privacy = acva::orchestrator::make_privacy_handlers(
+        capture, sessions);
 
     // HTTP control plane (/metrics, /status, /health, POST /reload,
-    // /mute /unmute /new-session /wipe).
+    // /mute /unmute /new-session /wipe /restart).
     std::unique_ptr<acva::http::ControlServer> control;
     try {
         control = std::make_unique<acva::http::ControlServer>(
             cfg.control, registry, &fsm,
             acva::orchestrator::make_status_extra(supervisor, capture),
-            run_reload, std::move(privacy), request_restart);
+            run_reload, std::move(privacy),
+            [&restart_requester]() { return restart_requester.request(); });
     } catch (const std::exception& ex) {
         acva::log::error("main", fmt::format("control server failed to start: {}", ex.what()));
         supervisor.stop();
@@ -402,39 +310,11 @@ int main(int argc, char** argv) {
         cfg, bus, registry, fsm, loopback_sink);
     auto* audio_pipeline = capture->pipeline();
 
-    // M8A — register the endpointer reload callback now that the
-    // capture pipeline (and its Endpointer) exists. When capture is
-    // disabled, audio_pipeline is null and we skip the registration —
-    // hot reload of vad.* fields will then mutate cfg in place but
-    // affect nothing observable until the next restart enables capture.
-    if (audio_pipeline != nullptr) {
-        if (auto* ep = audio_pipeline->endpointer(); ep != nullptr) {
-            reloader.register_callback("endpointer",
-                [ep](const acva::config::Config& live,
-                     const acva::config::ReloadDiff& diff) {
-                    bool any = false;
-                    for (const auto& f : diff.changed_hot) {
-                        if (f == "vad.onset_threshold"
-                            || f == "vad.offset_threshold"
-                            || f == "vad.hangover_ms") {
-                            any = true;
-                            break;
-                        }
-                    }
-                    if (!any) return;
-                    acva::audio::EndpointerConfig ec;
-                    ec.onset_threshold  = live.vad.onset_threshold;
-                    ec.offset_threshold = live.vad.offset_threshold;
-                    ec.hangover_ms      = std::chrono::milliseconds(live.vad.hangover_ms);
-                    ep->update_thresholds(ec);
-                    acva::log::info("config", fmt::format(
-                        "vad thresholds → onset={:.3f} offset={:.3f} hangover_ms={}",
-                        live.vad.onset_threshold,
-                        live.vad.offset_threshold,
-                        live.vad.hangover_ms));
-                });
-        }
-    }
+    // M8A Step 1 — register the endpointer reload callback now that
+    // the capture pipeline (and its Endpointer) exists. No-op when
+    // capture is disabled.
+    reload.register_endpointer_callback(
+        audio_pipeline ? audio_pipeline->endpointer() : nullptr);
 
     // ----- M4B + M5 STT path -----
     auto stt_stack = acva::orchestrator::build_stt_stack(
@@ -463,58 +343,12 @@ int main(int argc, char** argv) {
     // Skipped when the LLM stack is disabled (synthetic-only fake-driver
     // runs don't write to memory).
     //
-    // M8A Step 4 — warm restart. Before opening a fresh session, check
-    // for a recent runtime_state checkpoint. If the row's age + config
-    // hash both match, we adopt the prior session id instead of
-    // inserting a new one; otherwise we clear the row and fall through
-    // to open_initial. The checkpoint is consumed (cleared) on
-    // successful adopt so a subsequent crash-before-checkpoint doesn't
-    // re-adopt the same row.
+    // M8A Step 4 — warm restart. Try to adopt a recent runtime_state
+    // checkpoint (matching age + config_hash). Cold-open path runs
+    // when adoption is impossible or unsafe.
     if (dialogue->has_llm()) {
-        const auto& cfg_hash = config_hash;
-        auto rt_or = memory->read([](acva::memory::Repository& repo) {
-            return repo.read_runtime_state();
-        });
-
-        bool adopted = false;
-        if (auto* row_opt = std::get_if<std::optional<acva::memory::RuntimeStateRow>>(&rt_or);
-            row_opt && row_opt->has_value()) {
-            const auto& row = **row_opt;
-            const auto age_ms = acva::memory::now_ms() - row.checkpoint_at;
-            const std::int64_t max_age_ms =
-                static_cast<std::int64_t>(cfg.supervisor.checkpoint_max_age_seconds) * 1000;
-            const bool fresh = age_ms >= 0 && age_ms <= max_age_ms;
-            const bool hash_ok = !cfg_hash.empty()
-                              && row.config_hash.has_value()
-                              && *row.config_hash == cfg_hash;
-            if (fresh && hash_ok) {
-                auto adopt_or = sessions.adopt(row.session_id);
-                if (std::holds_alternative<acva::memory::SessionId>(adopt_or)) {
-                    acva::log::event("main", "warm_restart_adopted",
-                        acva::event::kNoTurn,
-                        {{"session_id", std::to_string(row.session_id)},
-                         {"age_ms", std::to_string(age_ms)},
-                         {"fsm_state_at_checkpoint", row.fsm_state}});
-                    adopted = true;
-                } else {
-                    acva::log::warn("main", fmt::format(
-                        "warm restart: adopt failed: {}",
-                        std::get<acva::memory::DbError>(adopt_or).message));
-                }
-            } else {
-                acva::log::info("main", fmt::format(
-                    "warm restart: discarding checkpoint "
-                    "(fresh={}, hash_ok={}, age_ms={})",
-                    fresh, hash_ok, age_ms));
-            }
-            // Whether we adopted or not, clear the row — a stale row
-            // shouldn't survive into another startup, and an adopted
-            // row has done its job.
-            (void)memory->read([](acva::memory::Repository& repo) {
-                return repo.clear_runtime_state();
-            });
-        }
-
+        const bool adopted = acva::orchestrator::try_warm_resume(
+            *memory, sessions, cfg, config_hash);
         if (!adopted) {
             auto sid_or = sessions.open_initial();
             if (auto* err = std::get_if<acva::memory::DbError>(&sid_or)) {
@@ -530,18 +364,14 @@ int main(int argc, char** argv) {
 
     // M8A Step 4 — passive watchdog. Subscribes to LlmToken,
     // TtsAudioChunk, SpeechStarted, FinalTranscript; on prolonged
-    // inactivity in a noisy FSM state (Transcribing / Thinking /
-    // Speaking / Interrupted) emits voice_stuck_total + a structured
-    // log line, and optionally requests a warm restart. Constructed
-    // here (after the bus + fsm exist, before the main loop) so it
-    // observes traffic for the whole run.
+    // inactivity in a noisy FSM state emits voice_stuck_total + a
+    // structured log line, and optionally calls the restart requester.
     acva::supervisor::Watchdog watchdog(cfg.supervisor, bus, fsm, registry);
-    watchdog.set_restart_fn([&request_restart](const char* reason) {
-        const auto reject = request_restart();
+    watchdog.set_restart_fn([&restart_requester](const char* reason) {
+        const auto reject = restart_requester.request();
         if (reject.has_value()) {
             acva::log::warn("watchdog", fmt::format(
-                "auto-restart rejected: {} (reason={})",
-                *reject, reason));
+                "auto-restart rejected: {} (reason={})", *reject, reason));
         } else {
             acva::log::warn("watchdog", fmt::format(
                 "auto-restart requested (reason={})", reason));
@@ -549,13 +379,9 @@ int main(int argc, char** argv) {
     });
     watchdog.start();
 
-    // M7 — wire BargeInDetector → PlaybackEngine and start it. The
-    // detector's on_fired callback runs on its bus subscription
-    // thread; the engine stores the publish ts atomically and the
-    // audio thread closes the timer on the first post-cancel silent
-    // buffer. The tts metrics poller drains the latency into the
-    // histogram. Wire BEFORE start() so the first SpeechStarted
-    // observed during Speaking can't slip past the callback.
+    // M7 — wire BargeInDetector → PlaybackEngine and start it. Wire
+    // BEFORE start() so the first SpeechStarted observed during
+    // Speaking can't slip past the callback.
     if (auto* bi = dialogue->barge_in(); bi != nullptr) {
         if (tts && tts->engine()) {
             bi->set_on_fired(
@@ -567,97 +393,37 @@ int main(int argc, char** argv) {
         bi->start();
     }
 
-    // M7 — small poller mirroring BargeInDetector counters into the
-    // metrics gauges. Tiny standalone thread (1 Hz cadence) — avoids
-    // contorting the existing capture / tts pollers, both of which
-    // own non-trivial mutexes for their own subsystems.
-    std::atomic<bool> bi_metrics_stop{false};
-    std::thread bi_metrics_thread;
-    if (auto* bi = dialogue->barge_in(); bi != nullptr) {
-        bi_metrics_thread = std::thread([&bi_metrics_stop, registry, bi] {
-            using namespace std::chrono_literals;
-            while (!bi_metrics_stop.load(std::memory_order_acquire)) {
-                registry->set_barge_in_fires_total(
-                    static_cast<double>(bi->fires_total()));
-                registry->set_barge_in_suppressed_total(
-                    static_cast<double>(bi->suppressed_total()));
-                registry->set_barge_in_suppressed_cooldown(
-                    static_cast<double>(bi->suppressed_cooldown()));
-                registry->set_barge_in_suppressed_aec(
-                    static_cast<double>(bi->suppressed_aec()));
-                std::this_thread::sleep_for(1s);
-            }
-        });
-    }
-
-    std::thread stdin_reader;
+    // M7 — RAII poller mirroring BargeInDetector counters into the
+    // metrics gauges. Tiny standalone thread (1 Hz cadence).
+    acva::orchestrator::BargeInMetricsPoller bi_metrics(
+        dialogue->barge_in(), registry);
+    bi_metrics.start();
 
     // ----- stdin text-input mode (M1 era) — only the line reader -----
+    acva::orchestrator::StdinReader stdin_reader(bus,
+        args.stdin_lang.empty() ? cfg.dialogue.fallback_language
+                                 : args.stdin_lang);
     if (args.stdin_mode) {
-        const std::string stdin_lang = args.stdin_lang.empty()
-                                           ? cfg.dialogue.fallback_language
-                                           : args.stdin_lang;
-        std::cout << "acva stdin mode (lang=" << stdin_lang
-                  << ") — type a line and press enter. Ctrl-D or Ctrl-C to exit.\n";
-        stdin_reader = std::thread([&bus, lang = stdin_lang]{
-            std::string line;
-            while (std::getline(std::cin, line)) {
-                if (line.empty()) continue;
-                bus.publish(acva::event::FinalTranscript{
-                    .turn = 0,
-                    .text = line,
-                    .lang = lang,
-                    .confidence = 1.0F,
-                    .audio_duration = {},
-                    .processing_duration = {},
-                });
-            }
-            // EOF on stdin (Ctrl-D or stdin closed) — request shutdown.
-            acva::cli::request_shutdown(SIGTERM);
-        });
+        stdin_reader.start();
     }
 
     // ----- M8A Step 5: boot-time gates -----
-    // Force-load each configured backend (LLM/STT/TTS) and probe the
-    // capture device. Failures are logged with a remediation hint;
-    // under strict_startup, we set the strict-failure flag and skip
-    // the main loop entirely so the orderly shutdown chain still
-    // runs before we exit non-zero. Skipped when startup_force_load
-    // is off.
-    bool strict_startup_failed = false;
-    {
-        const auto failures = acva::supervisor::run_startup_checks(cfg);
-        for (const auto& f : failures) {
-            const auto msg = fmt::format(
-                "{} startup gate failed: {} — {}",
-                f.component, f.error, f.remediation);
-            if (cfg.supervisor.strict_startup) {
-                acva::log::error("startup_check", msg);
-            } else {
-                acva::log::warn("startup_check", msg);
-            }
-        }
-        if (!failures.empty() && cfg.supervisor.strict_startup) {
-            std::cerr << "acva: " << failures.size()
-                      << " startup gate(s) failed under strict_startup; "
-                         "exiting (see structured logs above)\n";
-            strict_startup_failed = true;
-        }
-    }
+    const bool strict_startup_failed =
+        acva::orchestrator::run_startup_pass(cfg);
 
     // ----- 4. Main loop -----
     bool warm_restart_requested = false;
     while (acva::cli::signal_received() == 0 && !strict_startup_failed) {
-        // M8A Step 4 — warm restart. Drained on the main thread so
+        // M8A Step 4 — warm restart drain. Done on the main thread so
         // shutdown ordering against capture / dialogue / tts owners
         // (all locals here) is straightforward.
-        if (restart_requested.load(std::memory_order_acquire)) {
+        if (restart_requester.is_requested()) {
             warm_restart_requested = true;
             break;
         }
         // SIGHUP-driven reload: the signal handler set the flag from
         // an async-signal context; we drain it here on the main loop
-        // thread so reloader.reload() runs in a sane state.
+        // thread so reload.run_reload()() runs in a sane state.
         if (acva::cli::signal_reload_requested()) {
             acva::cli::clear_reload_request();
             const auto result = run_reload();
@@ -695,10 +461,7 @@ int main(int argc, char** argv) {
     const auto fsm_snapshot_before_stop = fsm.snapshot();
 
     // Wake the stdin reader if it's still in getline().
-    if (stdin_reader.joinable()) {
-        ::close(STDIN_FILENO);
-        stdin_reader.join();
-    }
+    stdin_reader.stop();
 
     // Orderly shutdown: stop producers first, then drain.
     // Each stack's stop() is idempotent and respects internal
@@ -708,8 +471,7 @@ int main(int argc, char** argv) {
     if (stt_stack) stt_stack->stop();
     if (dialogue) dialogue->stop();
     if (tts)      tts->stop();
-    bi_metrics_stop.store(true, std::memory_order_release);
-    if (bi_metrics_thread.joinable()) bi_metrics_thread.join();
+    bi_metrics.stop();
     watchdog.stop();
     supervisor.stop();
     fsm.stop();
@@ -721,28 +483,15 @@ int main(int argc, char** argv) {
     // even if memory.reset() has already torn down the orchestrator's
     // own connection. SQLite WAL allows the second connection.
     if (warm_restart_requested) {
-        acva::memory::RuntimeStateRow row{
-            .session_id     = sessions.id(),
-            .active_turn_id = (fsm_snapshot_before_stop.active_turn != acva::event::kNoTurn
-                                  ? std::optional<std::int64_t>{
-                                        fsm_snapshot_before_stop.active_turn}
-                                  : std::nullopt),
-            .fsm_state      = std::string(
-                acva::dialogue::to_string(fsm_snapshot_before_stop.state)),
-            .last_partial   = std::nullopt,
-            .config_hash    = config_hash.empty()
-                                  ? std::optional<std::string>{}
-                                  : std::optional<std::string>{config_hash},
-            .checkpoint_at  = acva::memory::now_ms(),
-        };
         // Drain + close the orchestrator's MemoryThread before we
         // open a second connection. SQLite WAL would tolerate the
         // overlap, but closing first keeps the on-disk state
         // unambiguous for post-mortems.
         memory.reset();
 
-        if (auto err = acva::memory::checkpoint_runtime_sync(
-                cfg.memory.db_path, row); err.has_value()) {
+        if (auto err = acva::orchestrator::write_warm_restart_checkpoint(
+                cfg.memory.db_path, fsm_snapshot_before_stop, sessions,
+                config_hash); err.has_value()) {
             acva::log::error("main", fmt::format(
                 "warm restart: checkpoint failed: {}; aborting exec — "
                 "next start will fall back to cold recovery",
@@ -752,8 +501,9 @@ int main(int argc, char** argv) {
         }
         acva::log::event("main", "warm_restart_checkpoint",
             acva::event::kNoTurn,
-            {{"session_id", std::to_string(row.session_id)},
-             {"fsm_state",  row.fsm_state}});
+            {{"session_id", std::to_string(sessions.id())},
+             {"fsm_state",  std::string(acva::dialogue::to_string(
+                              fsm_snapshot_before_stop.state))}});
         bus.shutdown();
 
         // execv replaces this process. argv stays valid because main()

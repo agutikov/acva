@@ -1,4 +1,4 @@
-#include "orchestrator/supervisor_setup.hpp"
+#include "orchestrator/observability/supervisor_setup.hpp"
 
 #include "event/event.hpp"
 #include "supervisor/probe.hpp"

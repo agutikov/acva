@@ -12,7 +12,7 @@
 #include "llm/prompt_builder.hpp"
 #include "memory/memory_thread.hpp"
 #include "metrics/registry.hpp"
-#include "orchestrator/capture_stack.hpp"
+#include "orchestrator/stacks/capture_stack.hpp"
 #include "playback/engine.hpp"
 #include "playback/queue.hpp"
 #include "tts/openai_tts_client.hpp"

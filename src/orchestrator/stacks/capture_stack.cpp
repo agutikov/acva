@@ -1,4 +1,4 @@
-#include "orchestrator/capture_stack.hpp"
+#include "orchestrator/stacks/capture_stack.hpp"
 
 #include "audio/apm.hpp"
 #include "log/log.hpp"

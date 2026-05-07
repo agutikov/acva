@@ -1,4 +1,4 @@
-#include "orchestrator/status_extra.hpp"
+#include "orchestrator/observability/status_extra.hpp"
 
 #include "audio/apm.hpp"
 

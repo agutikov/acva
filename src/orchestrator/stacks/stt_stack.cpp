@@ -1,4 +1,4 @@
-#include "orchestrator/stt_stack.hpp"
+#include "orchestrator/stacks/stt_stack.hpp"
 
 #include "dialogue/turn.hpp"
 #include "event/event.hpp"

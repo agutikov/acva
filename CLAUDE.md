@@ -12,9 +12,82 @@ Streaming partial STT with speculative LLM start (M5 — three options on the ta
 
 ## Status
 
-**M0 + M1 + M2 + M3 + M4 + M4B + M5 + M6 + M6B + M7 + M7B (code-complete) complete.** Test suite split into `acva_unit_tests` (271 cases, no external deps) and `acva_integration_tests` (13 cases, real Silero model + live Speaches). Both pass green on the dev workstation without any env vars; integration tests resolve assets via the XDG defaults main.cpp uses. **Compose stack is `llama` + `speaches` only** — Speaches replaces standalone `whisper.cpp/server` (STT) and `piper.http_server` (TTS) behind one OpenAI-API-compatible surface. TTS goes through `OpenAiTtsClient` (libcurl streaming PCM); STT through `OpenAiSttClient` (multipart `POST /v1/audio/transcriptions`, blocking, request/response — M5 swaps for streaming/realtime). `PlaybackEngine` carries a per-turn pre-buffer threshold (`cfg.playback.prefill_ms`, default 100 ms) that absorbs streaming-TTS chunk-arrival jitter — measured 56–71% fewer underruns without any total-latency regression. Demos `acva demo {tts,chat,stt}` exercise the new wiring; `acva demo stt` is a self-contained TTS-fixture-audio → STT round-trip. STT model is `deepdml/faster-whisper-large-v3-turbo-ct2` (turbo) with `WHISPER__COMPUTE_TYPE=int8_float16` and `WHISPER__TTL=-1` (set in compose env); the TTL pin is non-negotiable on the 8 GB RTX 4060 — faster-whisper #992 leaks ~300 MB per unload cycle, and Speaches' default 5-min auto-evict otherwise compounds across consecutive runs until inference OOMs. See memory note `project_gpu_cdi_and_vram.md` for the budget rationale. **Model registry (post-M7).** `config/default.yaml` carries a top-level `models:` block — LLM / STT / TTS / VAD catalogs of short aliases (`dialog`, `large-v3-turbo`, `en-amy`, `silero-v5` …). Subsystem fields (`cfg.llm.model`, `cfg.stt.model`, `cfg.tts.voices.<lang>`, `cfg.vad.model_path`) accept aliases that `config::resolve_aliases()` rewrites to backend-specific locators at config-load (HF id for STT/TTS, filename for VAD; LLM stays the alias as the OpenAI-endpoint label until M8A makes it load-bearing). `cfg.tts.voices` is now a `map<lang, alias_string>` parsed from YAML; `cfg.tts.voices_resolved` is the `map<lang, TtsVoice>` callers read. Aliases must resolve through the registry — pre-registry `voices: { en: { model_id, voice_id } }` no longer parses. `tools/acva-models` (Python 3, PyYAML) reads the same registry and installs assets via `list`/`install`/`sync`/`verify` subcommands; the old `scripts/download-{llm,stt,tts,vad,assets}.sh` were deleted.
+**M0 + M1 + M2 + M3 + M4 + M4B + M5 + M6 + M6B + M7 + M7B + M8A (code-complete) complete.** Test suite split into `acva_unit_tests` (352 cases, no external deps) and `acva_integration_tests` (13 cases, real Silero model + live Speaches). Both pass green on the dev workstation without any env vars; integration tests resolve assets via the XDG defaults main.cpp uses. **Compose stack is `llama` + `speaches` only** — Speaches replaces standalone `whisper.cpp/server` (STT) and `piper.http_server` (TTS) behind one OpenAI-API-compatible surface. TTS goes through `OpenAiTtsClient` (libcurl streaming PCM); STT through `OpenAiSttClient` (multipart `POST /v1/audio/transcriptions`, blocking, request/response — M5 swaps for streaming/realtime). `PlaybackEngine` carries a per-turn pre-buffer threshold (`cfg.playback.prefill_ms`, default 100 ms) that absorbs streaming-TTS chunk-arrival jitter — measured 56–71% fewer underruns without any total-latency regression. Demos `acva demo {tts,chat,stt}` exercise the new wiring; `acva demo stt` is a self-contained TTS-fixture-audio → STT round-trip. STT model is `deepdml/faster-whisper-large-v3-turbo-ct2` (turbo) with `WHISPER__COMPUTE_TYPE=int8_float16` and `WHISPER__TTL=-1` (set in compose env); the TTL pin is non-negotiable on the 8 GB RTX 4060 — faster-whisper #992 leaks ~300 MB per unload cycle, and Speaches' default 5-min auto-evict otherwise compounds across consecutive runs until inference OOMs. See memory note `project_gpu_cdi_and_vram.md` for the budget rationale. **Model registry (post-M7).** `config/default.yaml` carries a top-level `models:` block — LLM / STT / TTS / VAD catalogs of short aliases (`dialog`, `large-v3-turbo`, `en-amy`, `silero-v5` …). Subsystem fields (`cfg.llm.model`, `cfg.stt.model`, `cfg.tts.voices.<lang>`, `cfg.vad.model_path`) accept aliases that `config::resolve_aliases()` rewrites to backend-specific locators at config-load (HF id for STT/TTS, filename for VAD; LLM stays the alias as the OpenAI-endpoint label until M8A makes it load-bearing). `cfg.tts.voices` is now a `map<lang, alias_string>` parsed from YAML; `cfg.tts.voices_resolved` is the `map<lang, TtsVoice>` callers read. Aliases must resolve through the registry — pre-registry `voices: { en: { model_id, voice_id } }` no longer parses. `tools/acva-models` (Python 3, PyYAML) reads the same registry and installs assets via `list`/`install`/`sync`/`verify` subcommands; the old `scripts/download-{llm,stt,tts,vad,assets}.sh` were deleted.
 
-**Next: M8A — admin/state.** M7B (barge-in validation) closed code-complete 2026-05-05: synthetic-fixture-driven acceptance suite at `scripts/validate-bargein.py` runs four manifest fixtures (clean-speakers, noise-speakers, headphones, false-positive-self) through `acva demo bargein-validation --fixture <wav>` and parses the structured done-line for cancellation outcome + cascade latency + persistence semantics. Latencies measured 54-68 ms (well inside M7 §19.3 P50 ≤ 200 / P95 ≤ 400 gates). The seam is `cfg.audio.test_input_wav`: when set, `audio::CaptureEngine` bypasses PortAudio and pumps the WAV's int16 mono samples through the SPSC ring at real-time pace, so Resample → APM → VAD → Endpointer → BargeInDetector run on the production code path. Fixture synthesis at `tools/build-bargein-fixtures` mixes Speaches TTS tracks per a YAML manifest (idempotent, sha256-keyed). The original C++-doctest probe approach was dropped in favour of subprocess + log parsing because main.cpp's stack construction is ~280 LOC and replicating it as a parallel test fixture was net-loss. The original `false-positive-tv` fixture was dropped because content-based suppression (TV-news vs the actual user) requires M8C wake-word or M10 address detection — outside M7's intentional scope. Hardware spot-check (M7B Step 7, real mic + speakers) deferred to dogfood. M7 (barge-in) closed code-complete 2026-05-04: BargeInDetector (`src/dialogue/barge_in.{hpp,cpp}`) subscribes to `SpeechStarted`, snapshots FSM state, and promotes events that arrive while `Speaking` (past the AEC + cooldown gates) into `UserInterrupted`. `voice_barge_in_latency_ms` histogram + `voice_barge_in_fires_total/suppressed_total{cause}` gauges land on `/metrics`. TurnWriter now persists only sentences whose `PlaybackFinished` was observed before the cancel — a synthesized-but-not-played sentence is dropped, matching §6 of project_design.md. `min_real_utterance_chars` (default 3) filters cough/throat-clear FinalTranscripts that would otherwise cost an LLM call. Carry-over bugs landed: pre-padding now replayed into the M5 streaming sink at SpeechStarted (Bug 1); LLM cap cancels at the next *sentence* boundary instead of the next token, so the user never hears a half-thought (Bug 2); RMS gate on `UtteranceReady` (default 200 ≈ -45 dBFS) suppresses the Whisper subtitle hallucinations on near-silent buffers (Bug 4). Bug 3 (Speaches `prefix_padding_ms` warn) left in place — Speaches' Pydantic schema requires the field even though Speaches itself rejects it; the warn line is harmless. The 50-trial recorded validation suite (Step 5) is deferred to a manual dogfood pass when wired up to real mic + speakers. M6B closed 2026-05-04 via Path B (PipeWire `module-echo-cancel` upstream of acva): gate 4 = 25-46 dB speech-band cancellation (`acva demo aec-record` + `scripts/aec_analyze.py`), gate 1 = 0.200/min false-starts vs 1.0/min threshold (`scripts/soak-vad-falsestarts.sh --quick`), gate 3 = 5/5 clean transcripts during continuous TTS (`scripts/barge-in-probe.py`, now self-contained). The `--stdin-lang ru` flag wires synthetic stdin sessions to the Russian system_prompt + voice and hard-fails on misconfigured langs. The system-AEC RAII helper (`src/orchestrator/system_aec.cpp`) parses `source_name=` / `sink_name=` from `pactl list short modules` when reusing an existing module, adopts ownership when names match the `acva-echo-*` convention so a prior crash gets cleaned up on next clean exit, and refuses to start when args are unparseable — silent fallback was the original gate-1 false-pass mode (33/min). See `docs/aec_report.md` for the full M6 + M6B analysis.
+**M8A (admin/state) closed code-complete 2026-05-07.** Five steps shipped:
+**Step 1 — config hot-reload:** `src/config/reload.{hpp,cpp}` carries the
+`ReloadDiff` + field catalog (hot fields: `llm.{temperature,max_tokens}`,
+`dialogue.{max_assistant_sentences,max_tts_queue_sentences}`,
+`vad.{onset_threshold,offset_threshold,hangover_ms}`, `tts.tempo_wpm`,
+`logging.level`); restart-required surface covers endpoints, model ids,
+paths, ports, devices. `POST /reload` returns 200/409/400; SIGHUP raises
+the same path (split off the shutdown handler in `cli/args`). Endpointer
+gains `update_thresholds()` (mutex-guarded; on_frame snapshots the cfg
+under the same lock so concurrent reloads don't tear float reads).
+`acva demo reload` exercises the HTTP roundtrip end to end.
+**Step 2 — privacy commands:** new `dialogue::SessionManager` owns the
+active session id and fans out to subscribers (Manager / TurnWriter /
+Summarizer); `dialogue_stack` no longer opens a session inline. `POST
+/mute|/unmute|/new-session|/wipe?session=<id>|/wipe?all=true` on
+`ControlServer`; bare `/wipe` returns 400. `AudioPipeline::set_muted()`
+short-circuits process_frame and force-endpoints any in-progress
+utterance. `Repository::delete_session` cascades via FK; `wipe_all`
+DROPs + re-execs `kSchemaSql` in one transaction. `acva demo wipe`
+covers session + all-wipe + the no-qualifier guard.
+**Step 3 — memory CRUD CLI:** `src/cli/memory_cli.{hpp,cpp}` implements
+`acva memory <subcommand>` with sessions/session/turns/turn/facts/
+summaries/delete-*/wipe/vacuum/restart. Process-isolated from the
+orchestrator (opens `Database` directly; no MemoryThread); read paths
+coexist with a live acva via SQLite WAL, write paths block on
+`busy_timeout=5000`. `--json` for jq; `--yes` for wipe; `--dry-run` on
+deletes.
+**Step 4 — watchdog + checkpointed restart:** new `runtime_state`
+singleton table; `Repository::{upsert,read,clear}_runtime_state` plus
+the free `memory::checkpoint_runtime_sync(db_path, row)` helper for the
+pre-execv path. `src/supervisor/watchdog.{hpp,cpp}` subscribes to
+LlmToken / TtsAudioChunk / SpeechStarted / FinalTranscript and fires
+`voice_stuck_total{state}` once per state-episode when the FSM is in
+{Transcribing, Thinking, Speaking, Interrupted} for longer than
+`cfg.supervisor.stuck_threshold_seconds` (default 90 s). `POST /restart`
++ `acva memory restart` route through `RestartRequester` (5 s
+debounce); the main loop drains the flag, snapshots the FSM, runs the
+shutdown chain, writes the checkpoint, and `execv`s. Resume gate on
+startup gated by age + FNV-1a config hash (`config_file_hash`); SessionManager
+gains `adopt(id)`. Warm restart preserves session continuity (same
+`session_id`, prior turns visible to the LLM); the FSM starts fresh in
+Listening (no `last_partial` replay yet). Auto-restart on stuck is
+opt-in via `cfg.supervisor.auto_restart_on_stuck`.
+**Step 5 — boot-time model orchestration:** `src/llm/model_controller_client.{hpp,cpp}`
+talks to a Go sidecar at `cfg.llm.model_controller_url` (default
+`http://127.0.0.1:9877`); when `cfg.llm.model_file` differs from the
+sidecar's currently-loaded GGUF, acva calls `POST /llm/load` and waits.
+Pillar #1 stands — the sidecar (in `packaging/model-controller/`,
+single-file Go + Dockerfile) holds the docker socket privilege. The
+service is **not** auto-added to `packaging/compose/docker-compose.yml`
+because the bind-mount is a deliberate operator opt-in; the README has
+the paste-in stanza. `src/supervisor/startup_check.{hpp,cpp}` runs the
+force-load gates (LLM 1-token, STT silent-WAV, TTS 5-char, capture
+PortAudio probe); under `cfg.supervisor.strict_startup` failures abort
+with `EXIT_FAILURE` after orderly shutdown. Both `strict_startup` and
+`startup_force_load` default false to preserve M0–M7 dogfooding
+ergonomics.
+**Refactor pass closing M8A:** main.cpp's bookkeeping moved into ten
+new `src/orchestrator/` helpers — `model_controller_handoff`,
+`reload_setup`, `privacy_handlers`, `restart_driver`, `session_resume`,
+`startup_runner`, `barge_in_metrics`, `stdin_reader` (joining
+`bootstrap`, `tts_stack`, `capture_stack`, `stt_stack`, `dialogue_stack`,
+`event_tracer`, `status_extra`, `supervisor_setup`, `system_aec`).
+main.cpp shrunk from 776 → 526 lines while picking up all five M8A
+steps (vs the M0/M1-era ~280 baseline; the residual growth is genuine
+new wiring — warm-restart, watchdog, reload setup, startup gates).
+
+End-to-end smoke of the model-controller (set `cfg.llm.model_file` →
+sidecar recreates llama → acva picks up the new model) is deferred to
+a manual dogfood pass once the sidecar is wired into the user's
+compose stack; the C++ side is unit-tested against an in-process fake
+controller.
+
+**Next: M8B — observability/soak.** M7B (barge-in validation) closed code-complete 2026-05-05: synthetic-fixture-driven acceptance suite at `scripts/validate-bargein.py` runs four manifest fixtures (clean-speakers, noise-speakers, headphones, false-positive-self) through `acva demo bargein-validation --fixture <wav>` and parses the structured done-line for cancellation outcome + cascade latency + persistence semantics. Latencies measured 54-68 ms (well inside M7 §19.3 P50 ≤ 200 / P95 ≤ 400 gates). The seam is `cfg.audio.test_input_wav`: when set, `audio::CaptureEngine` bypasses PortAudio and pumps the WAV's int16 mono samples through the SPSC ring at real-time pace, so Resample → APM → VAD → Endpointer → BargeInDetector run on the production code path. Fixture synthesis at `tools/build-bargein-fixtures` mixes Speaches TTS tracks per a YAML manifest (idempotent, sha256-keyed). The original C++-doctest probe approach was dropped in favour of subprocess + log parsing because main.cpp's stack construction is ~280 LOC and replicating it as a parallel test fixture was net-loss. The original `false-positive-tv` fixture was dropped because content-based suppression (TV-news vs the actual user) requires M8C wake-word or M10 address detection — outside M7's intentional scope. Hardware spot-check (M7B Step 7, real mic + speakers) deferred to dogfood. M7 (barge-in) closed code-complete 2026-05-04: BargeInDetector (`src/dialogue/barge_in.{hpp,cpp}`) subscribes to `SpeechStarted`, snapshots FSM state, and promotes events that arrive while `Speaking` (past the AEC + cooldown gates) into `UserInterrupted`. `voice_barge_in_latency_ms` histogram + `voice_barge_in_fires_total/suppressed_total{cause}` gauges land on `/metrics`. TurnWriter now persists only sentences whose `PlaybackFinished` was observed before the cancel — a synthesized-but-not-played sentence is dropped, matching §6 of project_design.md. `min_real_utterance_chars` (default 3) filters cough/throat-clear FinalTranscripts that would otherwise cost an LLM call. Carry-over bugs landed: pre-padding now replayed into the M5 streaming sink at SpeechStarted (Bug 1); LLM cap cancels at the next *sentence* boundary instead of the next token, so the user never hears a half-thought (Bug 2); RMS gate on `UtteranceReady` (default 200 ≈ -45 dBFS) suppresses the Whisper subtitle hallucinations on near-silent buffers (Bug 4). Bug 3 (Speaches `prefix_padding_ms` warn) left in place — Speaches' Pydantic schema requires the field even though Speaches itself rejects it; the warn line is harmless. The 50-trial recorded validation suite (Step 5) is deferred to a manual dogfood pass when wired up to real mic + speakers. M6B closed 2026-05-04 via Path B (PipeWire `module-echo-cancel` upstream of acva): gate 4 = 25-46 dB speech-band cancellation (`acva demo aec-record` + `scripts/aec_analyze.py`), gate 1 = 0.200/min false-starts vs 1.0/min threshold (`scripts/soak-vad-falsestarts.sh --quick`), gate 3 = 5/5 clean transcripts during continuous TTS (`scripts/barge-in-probe.py`, now self-contained). The `--stdin-lang ru` flag wires synthetic stdin sessions to the Russian system_prompt + voice and hard-fails on misconfigured langs. The system-AEC RAII helper (`src/orchestrator/system_aec.cpp`) parses `source_name=` / `sink_name=` from `pactl list short modules` when reusing an existing module, adopts ownership when names match the `acva-echo-*` convention so a prior crash gets cleaned up on next clean exit, and refuses to start when args are unparseable — silent fallback was the original gate-1 false-pass mode (33/min). See `docs/aec_report.md` for the full M6 + M6B analysis.
 
 **M6 (AEC):** PlaybackEngine now taps the chunk it just emitted into
 an `audio::LoopbackSink` ring (sized by `cfg.audio.loopback.ring_seconds`,
@@ -33,15 +106,38 @@ pass-through stub when missing. `voice_aec_delay_estimate_ms`,
 src/                     — C++ source. Per-subsystem subdirs: audio/, cli/, config/,
                             dialogue/, event/, http/, llm/, log/, memory/, metrics/,
                             orchestrator/, pipeline/, playback/, stt/, supervisor/, tts/.
-src/main.cpp             — slim (~280 lines) linear orchestration: parse args →
+src/main.cpp             — linear orchestration (~525 lines as of M8A): parse args →
                             load config → demo dispatch → build per-subsystem stacks
-                            via orchestrator/ helpers → main loop → orderly shutdown.
-src/orchestrator/        — host-side glue. One *_stack.{hpp,cpp} per subsystem
-                            (tts_stack, capture_stack, stt_stack, dialogue_stack,
-                            supervisor_setup) plus bootstrap, event_tracer,
-                            status_extra. Each stack is a non-copyable RAII bundle
-                            that returns from build_*() with a stop() method that
-                            runs the right teardown order.
+                            via orchestrator/ helpers → main loop with reload + warm-
+                            restart drain → orderly shutdown (+ checkpoint+execv on
+                            warm-restart path). The body of each conceptual step is
+                            in an orchestrator/ helper; main.cpp owns the locals and
+                            their lifetimes.
+src/orchestrator/        — host-side glue, organised by role into 5 subdirs:
+                            stacks/        — tts_stack, capture_stack,
+                                              stt_stack, dialogue_stack. Each is
+                                              a non-copyable RAII bundle whose
+                                              build_*() returns with a stop()
+                                              that runs the right teardown
+                                              order.
+                            boot/          — runs once before/at startup:
+                                              bootstrap (config + ALSA + VRAM
+                                              monitor), system_aec (PipeWire
+                                              module-echo-cancel RAII),
+                                              model_controller_handoff (M8A
+                                              sidecar pre-call), startup_runner
+                                              (M8A force-load gates).
+                            admin/         — M8A admin/state surface helpers:
+                                              reload_setup, privacy_handlers,
+                                              restart_driver, session_resume.
+                            observability/ — bus subscribers + pollers:
+                                              event_tracer, status_extra,
+                                              barge_in_metrics, supervisor_setup.
+                            io/            — input drivers: stdin_reader.
+                            All still in `acva::orchestrator` namespace; the
+                            split is purely navigational. main.cpp owns the
+                            locals + their lifetimes; each helper isolates one
+                            chunk of wiring.
 tests/                   — doctest-based suites: acva_unit_tests (no deps) +
                             acva_integration_tests (real Silero model + future Speaches).
 config/default.yaml      — default runtime config + `models:` registry
@@ -120,7 +216,7 @@ If you find yourself recommending Boost.Cobalt, C++23 modules, an embedded infer
 
 ## Milestone Order (Adjusted from Original)
 
-`M0 skeleton → M1 LLM+memory (split: A complete, B Compose stack, C remaining) → M2 supervision → M3 TTS+playback → M4 audio+VAD → M4B Speaches consolidation → M5 STT → M6 AEC → M6B AEC hardware verification + system-AEC fallback → M7 barge-in → M8A admin/state → M8B observability/soak → M8C distribution + wake-word → M9 streaming partials + speculative LLM → M10 conversational UX (adaptive endpointer + address detection)`
+`M0 skeleton → M1 LLM+memory (split: A complete, B Compose stack, C remaining) → M2 supervision → M3 TTS+playback → M4 audio+VAD → M4B Speaches consolidation → M5 STT → M6 AEC → M6B AEC hardware verification + system-AEC fallback → M7 barge-in → M7B barge-in validation → M8A admin/state ✅ → M8B observability/soak → M8C distribution + wake-word → M9 streaming partials + speculative LLM → M10 conversational UX (adaptive endpointer + address detection)`
 
 Three reorderings / insertions vs. the original plan, all intentional:
 - **Supervision (M2) before TTS (M3)** — llama.cpp will crash during long-context dev; retrofitting supervision is painful.

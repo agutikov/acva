@@ -1,6 +1,6 @@
 #pragma once
 
-#include "orchestrator/capture_stack.hpp"
+#include "orchestrator/stacks/capture_stack.hpp"
 #include "supervisor/supervisor.hpp"
 
 #include <functional>

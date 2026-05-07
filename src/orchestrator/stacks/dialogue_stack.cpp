@@ -1,4 +1,4 @@
-#include "orchestrator/dialogue_stack.hpp"
+#include "orchestrator/stacks/dialogue_stack.hpp"
 
 #include "log/log.hpp"
 #include "memory/repository.hpp"
