@@ -73,3 +73,12 @@ Testing/
 .env
 packaging/compose/.env
 *.db
+
+# M8B observability stack — Docker named volumes hold the runtime
+# state, but local debug bind-mounts may land here too; ignore the
+# directories regardless.
+packaging/observability/prometheus-data/
+packaging/observability/grafana-data/
+
+# M8B soak harness — per-run reports go under a dated subdir.
+tests/soak/reports/

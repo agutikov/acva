@@ -1,0 +1,39 @@
+# acva — Prometheus scrape config.
+#
+# Prometheus runs with `network_mode: host` (see docker-compose.yml)
+# so the targets here use the host's `127.0.0.1` directly. acva and
+# llama both bind their control planes to loopback only, so the
+# host-gateway / bridge route doesn't reach them — host network
+# mode bypasses that. Adjust the ports if you bind acva on a
+# non-default cfg.control.port or disable llama's --metrics flag.
+
+global:
+  scrape_interval:     5s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: acva-dev
+
+scrape_configs:
+  # The orchestrator's metrics::Registry surface. M0–M8A populate
+  # this; the panels in packaging/grafana/acva.json query against
+  # the `voice_*` family it emits.
+  - job_name: acva
+    static_configs:
+      - targets: ["127.0.0.1:9876"]
+        labels:
+          service: acva
+
+  # llama-server when started with --metrics. The compose service in
+  # packaging/compose/docker-compose.yml passes the flag; if a user
+  # disables it the scrape will fail with a clean "connection refused"
+  # — Grafana panels use `OR vector(0)` to stay readable.
+  - job_name: llama
+    static_configs:
+      - targets: ["127.0.0.1:8081"]
+        labels:
+          service: llama
+    metrics_path: /metrics
+
+  # Speaches doesn't expose /metrics. The wedge / VRAM signal we care
+  # about is exported by acva's VramMonitor (voice_speaches_*), which
+  # arrives via the `acva` job above — no scrape job needed here.

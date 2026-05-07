@@ -1,0 +1,19 @@
+# acva — Grafana dashboard provisioning.
+# Loads any dashboard JSON found under /var/lib/grafana/dashboards
+# (mapped from ../grafana/ in docker-compose.yml) on Grafana startup.
+# Edit packaging/grafana/acva.json in-tree, restart the container,
+# panels reload.
+
+apiVersion: 1
+
+providers:
+  - name: acva
+    orgId: 1
+    folder: acva
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

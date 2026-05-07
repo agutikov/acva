@@ -1,0 +1,234 @@
+// acva — observability + control-plane topology
+// M8B Step 2 — render with: dot -Tsvg docs/observability.dot -o docs/observability.svg
+//
+// Three surfaces matter for operators:
+//   1. Metrics: Prometheus scrapes acva /metrics and (optionally)
+//      llama /metrics; Grafana queries Prometheus.
+//   2. Control: ControlServer's POST endpoints (/reload, /mute,
+//      /new-session, /wipe, /restart) are operator + soak-harness
+//      knobs.
+//   3. Traces (M8B Step 3, opt-in): acva exports OTLP HTTP to a
+//      local otelcol-contrib.
+//
+// VramMonitor is the bridge that turns external state (nvidia-smi
+// per-process VRAM + /proc/<pid>/cmdline scan) into the
+// `voice_speaches_*` series the soak driver acts on.
+
+digraph acva_observability {
+    rankdir=LR;
+    splines=true;
+    nodesep=0.4;
+    ranksep=0.6;
+    fontname="Inter,Helvetica,sans-serif";
+    fontsize=11;
+    node [fontname="Inter,Helvetica,sans-serif", fontsize=10,
+          style=filled, color="#1f2937", penwidth=1.2];
+    edge [fontname="Inter,Helvetica,sans-serif", fontsize=9,
+          color="#475569", penwidth=1.0];
+
+    // ----- acva daemon -----
+    subgraph cluster_acva {
+        label="acva daemon (host process)";
+        style=filled;
+        fillcolor="#dbeafe";
+        color="#1d4ed8";
+        fontcolor="#1e3a8a";
+        fontsize=12;
+
+        acva [label="acva\nmain orchestrator", shape=box,
+              fillcolor="#3b82f6", fontcolor=white];
+
+        // Sub-components that produce metrics or are otherwise
+        // labelled in /metrics.
+        AudioPipeline [label="AudioPipeline\n(capture · APM · VAD ·\nendpointer · barge-in)",
+                       shape=box, fillcolor="#93c5fd", fontcolor="#0c1844"];
+        DialogueManager [label="DialogueManager\n(LLM · sentence splitter ·\nTTS bridge · playback)",
+                         shape=box, fillcolor="#93c5fd", fontcolor="#0c1844"];
+        Supervisor [label="Supervisor\n(/health probes ·\nKeepAlive · Watchdog)",
+                    shape=box, fillcolor="#93c5fd", fontcolor="#0c1844"];
+        VramMonitor [label="VramMonitor\n(periodic probe;\nM8B Step 1 wedge classifier)",
+                     shape=box, fillcolor="#bfdbfe", fontcolor="#0c1844"];
+
+        Registry [label="metrics::Registry\nprometheus-cpp", shape=cylinder,
+                  fillcolor="#60a5fa", fontcolor="#0c1844"];
+
+        ControlServer [label="ControlServer\ncpp-httplib :9876",
+                       shape=box, fillcolor="#3b82f6", fontcolor=white];
+
+        // Internal data flow
+        AudioPipeline   -> Registry [style=dotted, label="set_*"];
+        DialogueManager -> Registry [style=dotted, label="set_*"];
+        Supervisor      -> Registry [style=dotted, label="health,\npipeline"];
+        VramMonitor     -> Registry [style=dotted, label="speaches_*\nvram_low"];
+        acva -> {AudioPipeline DialogueManager Supervisor VramMonitor}
+            [style=invis];
+    }
+
+    // HTTP endpoints emitted by ControlServer — split by purpose so
+    // the operator can see which ones are scrape vs control.
+    subgraph cluster_endpoints {
+        label="HTTP control plane (127.0.0.1:9876)";
+        style=filled;
+        fillcolor="#cffafe";
+        color="#0e7490";
+        fontcolor="#155e75";
+        fontsize=11;
+
+        ep_metrics [label="/metrics\nProm exposition", shape=note,
+                    fillcolor="#67e8f9", fontcolor="#0c1844"];
+        ep_status  [label="/status\nJSON snapshot\n(speaches.wedged hint)", shape=note,
+                    fillcolor="#67e8f9", fontcolor="#0c1844"];
+        ep_health  [label="/health\nliveness", shape=note,
+                    fillcolor="#a5f3fc", fontcolor="#0c1844"];
+        ep_reload  [label="/reload\nhot fields", shape=note,
+                    fillcolor="#a5f3fc", fontcolor="#0c1844"];
+        ep_mute    [label="/mute · /unmute\nVAD intake", shape=note,
+                    fillcolor="#a5f3fc", fontcolor="#0c1844"];
+        ep_wipe    [label="/new-session\n/wipe?session= /wipe?all=true",
+                    shape=note, fillcolor="#a5f3fc", fontcolor="#0c1844"];
+        ep_restart [label="/restart\ncheckpoint+execv", shape=note,
+                    fillcolor="#a5f3fc", fontcolor="#0c1844"];
+    }
+    ControlServer -> ep_metrics [arrowhead=none];
+    ControlServer -> ep_status  [arrowhead=none];
+    ControlServer -> ep_health  [arrowhead=none];
+    ControlServer -> ep_reload  [arrowhead=none];
+    ControlServer -> ep_mute    [arrowhead=none];
+    ControlServer -> ep_wipe    [arrowhead=none];
+    ControlServer -> ep_restart [arrowhead=none];
+    Registry -> ep_metrics [color="#0891b2", penwidth=1.6,
+                             label="serialize"];
+
+    // ----- Local storage -----
+    subgraph cluster_storage {
+        label="Local storage (per-host)";
+        style=filled;
+        fillcolor="#dcfce7";
+        color="#15803d";
+        fontcolor="#14532d";
+        fontsize=11;
+
+        sqlite [label="SQLite (WAL)\nacva.db\nsessions / turns /\nsummaries / facts /\nruntime_state",
+                shape=cylinder, fillcolor="#86efac", fontcolor="#14532d"];
+        json_log [label="JSON log files\nacva-YYYY…log\n(cfg.logging.dir_path)",
+                  shape=folder, fillcolor="#bbf7d0", fontcolor="#14532d"];
+    }
+    DialogueManager -> sqlite [label="MemoryThread\nwrites", color="#15803d"];
+    acva           -> json_log [label="spdlog JSON sink", color="#15803d"];
+
+    // ----- Compose backends -----
+    subgraph cluster_compose {
+        label="Compose backends (Docker)";
+        style=filled;
+        fillcolor="#ffedd5";
+        color="#c2410c";
+        fontcolor="#7c2d12";
+        fontsize=11;
+
+        llama [label="llama-server\n:8081\n--metrics enabled",
+               shape=box, fillcolor="#fdba74", fontcolor="#7c2d12"];
+        speaches [label="speaches\n:8090\nSTT + TTS\n(no /metrics surface)",
+                  shape=box, fillcolor="#fdba74", fontcolor="#7c2d12"];
+        model_ctl [label="model-controller (Go)\n:9877\nPOST /llm/load", shape=box,
+                   fillcolor="#fed7aa", fontcolor="#7c2d12"];
+    }
+    AudioPipeline   -> speaches [label="POST /v1/audio/transcriptions", color="#c2410c"];
+    DialogueManager -> llama    [label="SSE /v1/chat/completions", color="#c2410c"];
+    DialogueManager -> speaches [label="POST /v1/audio/speech", color="#c2410c"];
+    Supervisor -> llama    [label="GET /health", style=dashed, color="#c2410c"];
+    Supervisor -> speaches [label="GET /health", style=dashed, color="#c2410c"];
+    acva -> model_ctl [label="POST /llm/load (boot)", color="#c2410c"];
+
+    // ----- Observability stack (operator-managed) -----
+    subgraph cluster_obs {
+        label="Observability stack (operator-installed)";
+        style=filled;
+        fillcolor="#ede9fe";
+        color="#6d28d9";
+        fontcolor="#4c1d95";
+        fontsize=11;
+
+        prom [label="Prometheus\nlocal scrape",
+              shape=box, fillcolor="#a78bfa", fontcolor=white];
+        graf [label="Grafana\npackaging/grafana/acva.json\n(M8B Step 2)",
+              shape=box, fillcolor="#a78bfa", fontcolor=white];
+        otel [label="otelcol-contrib\n:4318/v1/traces\n(opt-in, M8B Step 3)",
+              shape=box, fillcolor="#c4b5fd", fontcolor="#4c1d95",
+              style="filled,dashed"];
+    }
+    prom -> ep_metrics [dir=back, color="#6d28d9", penwidth=2.0,
+                        label="GET /metrics\n(N s scrape)"];
+    prom -> llama      [dir=back, color="#6d28d9", style=dashed,
+                        label="GET /metrics", arrowhead=none];
+    graf -> prom       [color="#6d28d9", penwidth=2.0, label="PromQL"];
+    acva -> otel       [color="#6d28d9", style=dashed,
+                        label="OTLP/HTTP\nspan trees per turn"];
+
+    // ----- Soak harness -----
+    subgraph cluster_soak {
+        label="Soak harness (M8B Step 1)";
+        style=filled;
+        fillcolor="#fee2e2";
+        color="#b91c1c";
+        fontcolor="#7f1d1d";
+        fontsize=11;
+
+        soak_sh [label="scripts/soak.sh\nbash wrapper",
+                 shape=box, fillcolor="#fca5a5", fontcolor="#7f1d1d"];
+        soak_py [label="scripts/soak-driver.py\nfeed · poll · auto-restart",
+                 shape=box, fillcolor="#fca5a5", fontcolor="#7f1d1d"];
+        soak_csv [label="soak-metrics.csv\n+ soak-report.txt",
+                  shape=folder, fillcolor="#fecaca", fontcolor="#7f1d1d"];
+        prompts  [label="tests/soak/prompts.txt\n30-line corpus",
+                  shape=folder, fillcolor="#fecaca", fontcolor="#7f1d1d"];
+    }
+    soak_sh -> soak_py [color="#b91c1c"];
+    prompts -> soak_py [color="#b91c1c"];
+    soak_py -> acva     [label="acva --stdin\nFinalTranscript stream",
+                          color="#b91c1c"];
+    soak_py -> ep_metrics [label="GET /metrics\n(every 5 s)", color="#b91c1c"];
+    soak_py -> ep_status  [label="GET /status",
+                            color="#b91c1c", style=dashed];
+    soak_py -> speaches [label="docker compose restart speaches\n(on voice_speaches_wedged=1)",
+                          color="#b91c1c", style=dashed];
+    soak_py -> soak_csv [color="#b91c1c"];
+
+    // ----- System interfaces -----
+    subgraph cluster_sys {
+        label="System interfaces";
+        style=filled;
+        fillcolor="#f1f5f9";
+        color="#475569";
+        fontcolor="#334155";
+        fontsize=11;
+
+        nvsmi [label="nvidia-smi\nquery-compute-apps",
+               shape=ellipse, fillcolor="#cbd5e1", fontcolor="#334155"];
+        proc  [label="/proc/<pid>/cmdline\nspeaches-PID match",
+               shape=ellipse, fillcolor="#cbd5e1", fontcolor="#334155"];
+        proc_self [label="/proc/<pid>/status\nVmRSS",
+                   shape=ellipse, fillcolor="#cbd5e1", fontcolor="#334155"];
+        docksock [label="/var/run/docker.sock",
+                  shape=ellipse, fillcolor="#cbd5e1", fontcolor="#334155"];
+        pa [label="PortAudio /\nPipeWire-Pulse",
+            shape=ellipse, fillcolor="#cbd5e1", fontcolor="#334155"];
+    }
+    VramMonitor -> nvsmi [color="#475569"];
+    VramMonitor -> proc  [color="#475569"];
+    soak_py     -> proc_self [label="acva RSS",
+                               color="#475569", style=dashed];
+    model_ctl   -> docksock  [label="docker compose CLI",
+                               color="#475569", style=dashed];
+    AudioPipeline -> pa [label="capture", color="#475569"];
+    DialogueManager -> pa [label="playback", color="#475569"];
+
+    // Operator-side flow that doesn't fit in any cluster
+    operator [label="operator\n(human + curl/CLI)",
+              shape=oval, fillcolor="#fde68a", color="#b45309",
+              fontcolor="#92400e"];
+    operator -> graf       [label="dashboard"];
+    operator -> ep_status  [label="curl", style=dashed];
+    operator -> ep_reload  [label="POST", style=dashed];
+    operator -> ep_restart [label="POST", style=dashed];
+    operator -> ep_wipe    [label="POST", style=dashed];
+}

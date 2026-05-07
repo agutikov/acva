@@ -1,0 +1,87 @@
+# acva — observability stack (M8B Step 2).
+#
+# Separate from packaging/compose/docker-compose.yml on purpose:
+# observability is operator-installed, not part of the inference
+# fast path. Bring it up with:
+#
+#   cd packaging/observability && docker compose up -d
+#   open http://127.0.0.1:3000  (admin/admin)
+#
+# Prometheus scrapes:
+#   * acva  on host:9876   (the host's ControlServer)
+#   * llama on host:8081   (when llama-server runs with --metrics)
+# Both are reached via the docker → host gateway alias
+# `host.docker.internal`, available on Linux when `host-gateway` is
+# pinned in extra_hosts (set below).
+#
+# Loopback-only port bindings (127.0.0.1:…) keep the dashboards off
+# the network — matches the rest of the project's local-first stance.
+# Override the binds in a `docker-compose.override.yml` if you want
+# remote access.
+
+name: acva-observability
+
+services:
+  # Both services run on the host network so they can reach
+  # acva (cfg.control.bind=127.0.0.1:9876) and llama-server
+  # (compose binds 127.0.0.1:8081) without the
+  # `host.docker.internal` round trip — those services bind to host
+  # loopback only, which the docker bridge can't reach.
+  #
+  # Cost of host network: ports are no longer namespaced. We bind
+  # Grafana to 127.0.0.1:3000 explicitly via GF_SERVER_HTTP_ADDR so
+  # it doesn't expose on all interfaces.
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: acva-prometheus
+    network_mode: host
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.listen-address=127.0.0.1:9090"
+      - "--web.enable-lifecycle"        # supports POST /-/reload
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/healthy"]
+      interval: 10s
+      timeout: 2s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: acva-grafana
+    network_mode: host
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../grafana:/var/lib/grafana/dashboards:ro     # provisioned dashboards source
+      - grafana-data:/var/lib/grafana
+    environment:
+      GF_SERVER_HTTP_ADDR:        "127.0.0.1"
+      GF_SECURITY_ADMIN_USER:     "${GF_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GF_ADMIN_PASSWORD:-admin}"
+      # Disable signups + enable anonymous viewer for the local box.
+      GF_USERS_ALLOW_SIGN_UP:     "false"
+      GF_AUTH_ANONYMOUS_ENABLED:  "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 2s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+
+# Named volumes — Docker manages permissions for the in-container
+# uid (Prom 65534, Grafana 472) without operator chown. Survives
+# compose-down; wipe with `docker compose down -v`.
+volumes:
+  prometheus-data:
+  grafana-data:

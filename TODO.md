@@ -11,6 +11,29 @@ process it and load into memory + add memory read instructions into context
 so agent can answer questions about itself
 
 
+Dialog:
+    - silence is important, remove annoying "How can I help you" after every response
+    - verify and eliminate hidden prompts in GGUF
+    - chat template
+    - logits bias
+        - increase EOS probability
+    - grammar constraints
+        - GBNF ???
+    - stop token
+    - --verbose-prompt llama.cpp option
+    - develop GBNF for our conversational agent
+        - actions:
+            - think
+            - wait
+            - speak
+            - ignore
+            - what else?
+    - Clarify location and configuration of:
+        - chat template
+        - special tokenizer control tokens
+        - GBNF and output formatting - XML,JSON
+    
+
 
 
 Can we split internal explicit LLM thinking and speaking?

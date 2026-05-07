@@ -1,0 +1,15 @@
+# acva — Grafana datasource auto-provisioning.
+# Grafana reads this on startup; no manual datasource setup needed.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://127.0.0.1:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      timeInterval: "5s"
+      httpMethod: POST

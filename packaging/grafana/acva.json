@@ -1,0 +1,143 @@
+{
+  "title": "acva — voice agent (M8B Step 2 placeholder)",
+  "tags": ["acva", "voice"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "title": "FSM state",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "voice_fsm_state",
+          "legendFormat": "{{state}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Speaches VRAM (MiB) + wedged flag",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "voice_speaches_vram_used_mib",
+          "legendFormat": "vram_used_mib",
+          "refId": "A"
+        },
+        {
+          "expr": "voice_speaches_wedged * 100",
+          "legendFormat": "wedged x100",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "TTS first-audio latency (P50/P95)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(voice_tts_first_audio_ms_bucket[5m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(voice_tts_first_audio_ms_bucket[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ms" }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Service health",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "voice_health_state",
+          "legendFormat": "{{service}}/{{state}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Playback (queue depth + underruns)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "voice_playback_queue_depth",
+          "legendFormat": "queue_depth",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(voice_playback_underruns_total[1m]) * 60",
+          "legendFormat": "underruns/min",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Watchdog stuck-fires + barge-in",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "expr": "rate(voice_stuck_total[5m])",
+          "legendFormat": "stuck/{{state}}",
+          "refId": "A"
+        },
+        {
+          "expr": "voice_barge_in_fires_total",
+          "legendFormat": "barge_in_fires",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Pipeline state (1 = active)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 24 },
+      "targets": [
+        {
+          "expr": "voice_pipeline_state",
+          "legendFormat": "{{state}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "orientation": "horizontal"
+      }
+    }
+  ]
+}
