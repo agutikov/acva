@@ -86,6 +86,7 @@ Followups:
     - quiz
     - web search
 - web ui - plans/web_ui_architecture.md
+    - builtin monitoring with charts.js
 - docs, readme for advanced users plus arch overview, internals in docs
 - MacOS Metal
 - Windows

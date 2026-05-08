@@ -1,0 +1,39 @@
+[Unit]
+Description=acva — Speaches (STT + TTS backend, M4B consolidation)
+After=network.target
+
+# Speaches is a Python (FastAPI/uvicorn) service that bundles
+# faster-whisper for STT and Piper for TTS behind one OpenAI-API-
+# compatible surface — replacing the M2-era whisper-server +
+# piper-server pair. The bare-metal install path expects the
+# operator to:
+#   1. `pip install speaches` into a per-user venv at
+#      %h/.local/opt/speaches/venv/.
+#   2. `mkdir -p %h/.local/share/acva/models/speaches/` for the
+#      HuggingFace cache.
+#   3. Drop a `speaches.env` next to this unit (or use the path
+#      below) with WHISPER__INFERENCE_DEVICE / COMPUTE_TYPE / TTL.
+# See packaging/systemd/README.md for the canonical dev-box layout.
+#
+# `EnvironmentFile=-...` (leading dash) makes the file optional —
+# operators relying on Speaches' own defaults can omit it.
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/acva/speaches.env
+Environment=HF_HOME=%h/.local/share/acva/models/speaches
+Environment=LOOPBACK_HOST_URL=http://localhost:8090
+ExecStart=%h/.local/opt/speaches/venv/bin/uvicorn \
+  speaches.main:app \
+  --host 127.0.0.1 \
+  --port 8090
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=120
+# faster-whisper int8_float16 + Piper voices fit comfortably under
+# 6 GB on an 8 GB card alongside a 7B GGUF. Tighten if you need to
+# share the GPU with another process.
+MemoryMax=8G
+
+[Install]
+WantedBy=default.target

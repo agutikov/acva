@@ -6,3 +6,4 @@
 
 include:
   - packaging/compose/docker-compose.yml
+  - packaging/observability/docker-compose.yml

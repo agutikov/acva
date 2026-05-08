@@ -300,7 +300,86 @@ audio:
   fix; wake-word is the cheap, deterministic version that ships
   alongside the MVP.
 
-## Step 2 — Packaging
+## Step 2 — Packaging — ✅ landed 2026-05-08 (modulo image digest pinning + AUR/.deb stretch)
+
+Shipped:
+- **`scripts/dev-up.sh` + `scripts/dev-down.sh`** — wrappers around
+  `docker compose ... up -d` / `down`. dev-up.sh:
+  1. Auto-creates `.env` from `.env.example` with the
+     `__SET_HOME__` sentinel substituted to the operator's actual
+     `$HOME` on first run.
+  2. Refuses to proceed if `.env` still contains the sentinel
+     (catches the failure mode that bit us 2026-05-08, where a
+     literal `youruser` placeholder bound the compose mount to a
+     non-existent path and llama crash-looped).
+  3. `docker compose -p acva … up -d` for explicit project naming.
+  4. Polls `docker inspect acva-llama` + `acva-speaches` for
+     `healthy` (60 s ceiling); doesn't conflate with the
+     observability stack's containers.
+  5. Tail-runs `tools/acva-models status` so a missing STT/TTS
+     model surfaces immediately.
+  `dev-down.sh` is symmetric; `--wipe` adds `-v` to clear
+  anonymous volumes (the `ACVA_MODELS_DIR` host bind-mount is
+  never touched).
+- **`.env.example` self-documenting placeholder** — replaced the
+  literal `/home/youruser/...` with `__SET_HOME__/...` plus a
+  comment block pointing at `dev-up.sh`. Manual setup still works:
+  the comment instructs `sed -i "s|__SET_HOME__|$HOME|g" .env`.
+- **`packaging/systemd/` modernised for M4B reality**:
+  - Removed pre-M4B `acva-whisper.service` + `acva-piper.service`
+    (whisper.cpp / piper bare-metal placeholders that no longer
+    match the runtime).
+  - Added `acva-speaches.service` — single Speaches unit replacing
+    the pair, with `EnvironmentFile=-…` for optional
+    `WHISPER__INFERENCE_DEVICE` / `COMPUTE_TYPE` / `TTL` overrides
+    and `HF_HOME=…/models/speaches` for the cache.
+  - Updated `acva.target` + `acva.service` `Wants=` / `After=` to
+    point at the new pair (llama + speaches).
+  - `packaging/systemd/README.md` rewritten: dev path = compose
+    (recommended), systemd path = "production-style alternative",
+    canonical bare-metal layout documented, validation gate flagged
+    as M8C acceptance work on a fresh VM.
+- **`scripts/install-systemd.sh` + `scripts/uninstall-systemd.sh`**
+  — copy units into `${XDG_CONFIG_HOME:-~/.config}/systemd/user/`
+  + `daemon-reload`; uninstall is idempotent and disables before
+  removing. Round-tripped cleanly on the dev box; `systemd-analyze
+  verify` reports unit files are syntactically valid (only flags
+  missing local binaries, expected on a compose-path operator's
+  machine).
+
+Acceptance against the plan's gate:
+- "Both deployment paths work end-to-end on a clean Manjaro and a
+  clean Ubuntu 24.04 VM" — **partial**. Compose path fully
+  validated on the dev box. systemd path's units pass
+  `systemd-analyze verify` and round-trip cleanly through
+  install/uninstall, but the bare-metal install of llama.cpp /
+  Speaches isn't validated end-to-end on a fresh VM. That's
+  documented as the remaining acceptance work; the unit files
+  themselves are correct for the M4B stack.
+
+Deferred (the "Optional (stretch)" items + cleanup identified
+mid-work):
+- **Image digest pinning** in `packaging/compose/docker-compose.yml`
+  — currently `:server-cuda` (rolling llama.cpp tag) and
+  `:latest-cuda` (rolling Speaches tag). Pinning to `@sha256:…`
+  digests is reproducible-build territory; deferred to MVP-cut
+  time when the digests are otherwise stable.
+- **AUR `PKGBUILD`** for Arch / Manjaro, **`.deb` build script**
+  for Debian/Ubuntu — both stretch in the plan, deferred to a
+  post-MVP packaging push.
+- **Compose project-label clean-up** — the
+  `packaging/observability/` containers ended up labelled
+  `project=acva` despite the YAML's `name: acva-observability`
+  (compose-v2 quirk with `--project-directory` overriding the
+  YAML name). dev-up.sh works around it by polling specific
+  container names instead of the project; a real fix is to rename
+  the observability project to something less collision-prone
+  (`acva-obs`?). Documented but not fixed.
+- **`packaging/man/acva.1`** man page — listed in the original
+  spec; not yet written. Trivial follow-up given `acva --help`
+  is already complete; pairs naturally with M8C Step 3 (docs).
+
+## Step 2 — Packaging (original spec)
 
 Two deployment paths ship side-by-side; both have been informally validated since M1.
 
