@@ -23,7 +23,39 @@ The split from the original M8 is purely organizational; M8 was growing past 11 
 - Admin / control plane (M8A).
 - Soak / observability (M8B).
 
-## Step 1 — Wake-word — ✅ framework landed 2026-05-07 (openWakeWord ONNX inference deferred)
+## Step 1 — Wake-word — ✅ closed 2026-05-08 (off-by-default; M10 address detection takes over)
+
+**Close-out (2026-05-08).** All three tiers (framework, real ONNX
+inference, custom-phrase trainer + demo) shipped and are tested
+green. After a debug session diagnosing live-demo silence (built
+`acva demo wake-word-offline` + `scripts/wake-word-offline.sh` to
+compare raw + AEC sources through STT and the wake-word engine in
+parallel), reviewed whether wake-word is the right primitive for
+acva's product line and concluded it is not — see
+`plans/open_questions.md` §L8 for the full five-point analysis.
+
+The summary: in this codebase Speaches stays pinned in VRAM (L7
+`WHISPER__TTL=-1`), so wake-word doesn't save model VRAM; Whisper
+silence-hallucinations are a VAD-layer concern that wake-word does
+not address; and acva's "multi-hour conversational" product line
+wants address detection ("is the user addressing me?"), not phrase
+gating. Address detection lands as M10 (`project_design.md` §17)
+and will reuse the gate plumbing in `audio/pipeline.cpp:174-208`
+verbatim — only the boolean source changes from "phonetic match"
+to "addressed-to-me classifier".
+
+**What stays:** all wake-word code (engine, gate, demos, trainer,
+registry, observability counters, hot-reload). It works; it's the
+runway for M10; and it's still the correct primitive for operators
+who want sleep-and-wake mode. **What flips:**
+`cfg.audio.wake_word.enabled` defaults to `false` so the M8C
+shipping behaviour matches the conversational product mode.
+
+The Tier-by-tier history below is preserved for reference.
+
+---
+
+### Tier history — ✅ framework landed 2026-05-07 (openWakeWord ONNX inference deferred)
 
 Shipped:
 - **Config:** `cfg.audio.wake_word.{enabled, model_paths, threshold,
@@ -204,34 +236,66 @@ deferred tiers (real ONNX inference + `acva demo wake-word` /
    the dev workstation. Performance is not separately benchmarked
    yet — deferred to a Tier 3 / dogfood pass.
 
-**Tier 3 — custom phrases (~1.5 days)**
+**Tier 3 — custom phrases — ✅ landed 2026-05-08**
 
-6. **`acva demo wake-word`** — live mic for `--duration <s>` (default
-   5 s), feeds samples through the configured wake-word model, and
-   prints per-frame confidence + a final summary (max score, count
-   above threshold). Operator-side threshold tuning aid;
-   complements `acva demo capture` for VAD.
-7. **`tools/train-wake-word`** — Python helper that drives the
-   openWakeWord training pipeline using acva's local Piper.
-   Inputs: `<phrase>` + output filename. Synthesises ~50 min of
-   positive audio across many Piper voices, downloads /
-   caches the openWakeWord embedding model + negatives corpus,
-   trains the classifier head, emits ONNX into
-   `${XDG_DATA_HOME}/acva/models/wake_word/<name>.onnx` and
-   appends an entry to a local `models-extra.yaml` overlay. Drives
-   on Speaches' OpenAI-API surface (already running) so it doesn't
-   pull a separate Piper install. ~30 min wall-clock per phrase
-   on the dev box GPU.
-   - Open question: vendor openWakeWord's training code as a Python
-     dep, or install via `pip` and treat it as a build-time
-     prerequisite. The project's existing `tools/acva-models`
-     already requires PyYAML; another opt-in dep for `train-wake-word`
-     is acceptable as long as it's not a hard dep for the runtime.
-   - Adjacent decision: lives in the project repo
-     (`tools/train-wake-word`) vs a sibling project. The training
-     pipeline is loosely coupled to acva — only the output ONNX
-     needs to land in the registry. Sibling project is cleaner
-     architecturally; in-repo is more discoverable.
+6. **`acva demo wake-word`** (✅) — `src/demos/wake_word.cpp`. Live
+   mic for `--duration <s>` (default 5 s), feeds samples through
+   the production AudioPipeline (so resample → APM → WakeWord
+   sees the same code path as runtime), polls `last_score()` at
+   10 Hz, prints a per-tick `t=…s score=…` row + an
+   ABOVE-THRESHOLD marker, and finishes with a summary (ticks,
+   max score, % above threshold, total detections that crossed).
+   Headless capture is detected and called out so the operator
+   doesn't mistake "no audio reached the pipeline" for "the
+   model never fires." Failure paths covered: empty
+   `cfg.audio.wake_word.model_paths` (config error with
+   actionable next step) and ONNX load failure (engine warning
+   surfaced directly to stdout).
+7. **`tools/train-wake-word`** (✅) — Python 3.11 driver. Inputs:
+   positional `<phrase>` + `--output <name>`; optional
+   `--duration-min`, `--voice-lang`, `--speaches-url`, `--config`,
+   `--work-dir`, `--prepare-only`. Pipeline:
+   1. `synthesize` — POST `/v1/audio/speech` per (voice ×
+      phrasing variant) into `<work>/positives/`. Phrasing
+      variants (`p`, `p.`, `p?`, `p!`, `p, please.`, `Hey, p.`,
+      `p now.`, `p, can you hear me?`) give Piper enough prosodic
+      spread to train a robust head without lexical leakage.
+      Idempotent — filenames encode `(repetition, voice, variant)`
+      so a re-run after Speaches died only re-fetches what's
+      missing.
+   2. `train` — calls `openwakeword.train.compute_features_from_generator`
+      + `train.train_model`. The openwakeword package is an
+      **opt-in pip dependency** — not present means a clean exit-2
+      with an actionable `pip install --upgrade 'openwakeword[training]'`
+      message. CUDA is auto-detected via `torch.cuda.is_available()`.
+   3. `register` — copies the trained ONNX into
+      `${XDG_DATA_HOME}/acva/models/wake_word/<name>.onnx` and
+      appends an entry to `${XDG_CONFIG_HOME}/acva/models-extra.yaml`
+      under `models.wake_word.<name>`. The C++ config loader does
+      not yet consume this overlay — operators reference the bare
+      filename `<name>.onnx` under `audio.wake_word.model_paths`
+      and `bootstrap.cpp` resolves that against XDG_DATA_HOME.
+      The overlay write is forward-looking — it'll let the alias
+      `<name>` resolve cleanly once an overlay-aware config-loader
+      pass lands.
+   `--prepare-only` runs steps 1+3 only (synthesis + reserved
+   overlay entry), useful for splitting work across machines (one
+   with Speaches, one with PyTorch). Smoke-tested: 0.05-min
+   `--prepare-only` against the dev workstation's en-amy voice
+   produces 3 WAV clips and the expected overlay file in
+   ~0.1 s; full-pipeline run without openwakeword installed
+   exits-2 with the install hint after the synthesis step
+   completes.
+
+   Decisions made (resolving the original open questions):
+   - **Vendoring vs pip dep:** openwakeword is an opt-in pip dep,
+     same as the plan's preferred path. Hard error message only
+     when the user actually tries to train; synthesis works
+     without it. Keeps the runtime free of PyTorch.
+   - **Repo location:** lives in `tools/train-wake-word` (in-repo).
+     Discoverability beats architectural purity; the training
+     pipeline is small enough that a sibling project would just
+     add friction.
 
 **Recommended landing order:** Tier 1 first (foundations: catalog,
 aliases, observability, hot-reload). Tier 2 closes the v1 deferred

@@ -36,6 +36,8 @@ add_library(acva_core STATIC
     demos/tone.cpp
     demos/transcribe.cpp
     demos/tts.cpp
+    demos/wake_word.cpp
+    demos/wake_word_offline.cpp
     demos/wedge.cpp
     demos/wipe.cpp
     dialogue/barge_in.cpp
@@ -106,7 +108,7 @@ target_link_libraries(acva_core
         fmt::fmt
         prometheus-cpp::core
         prometheus-cpp::pull
-        SQLite::SQLite3
+        SQLite3::SQLite3
         CURL::libcurl
         Threads::Threads
     PRIVATE

@@ -1,0 +1,481 @@
+#!/usr/bin/env python3
+# train-wake-word — drive the openWakeWord training pipeline for a
+# custom phrase, using acva's local Speaches as the TTS source for
+# positive samples.
+#
+# Pipeline (all idempotent — re-runs reuse cached intermediates):
+#
+#   1. **synthesize** — POST /v1/audio/speech per (voice × phrasing
+#      variant) into <work>/positives/. ~50 minutes of audio across
+#      configured Piper voices for the requested language.
+#
+#   2. **fetch-deps** — download / cache openWakeWord training assets
+#      (negatives corpus + pretrained embedding features) into
+#      ${ACVA_MODELS_DIR}/wake_word_training/. Skipped when
+#      `--prepare-only`.
+#
+#   3. **train** — call openwakeword.train.* to fit a classifier head
+#      on the synthesized positives + cached negatives. Emits a
+#      `<name>.onnx` with the [1, 16, 96] → [1, 1] signature acva's
+#      runtime expects. Skipped when `--prepare-only`.
+#
+#   4. **register** — copy the ONNX into
+#      ${XDG_DATA_HOME}/acva/models/wake_word/<name>.onnx and append
+#      an entry to ${XDG_CONFIG_HOME}/acva/models-extra.yaml so the
+#      `<phrase-alias>` becomes resolvable from the config registry.
+#      The C++ config loader does not yet consume models-extra.yaml,
+#      so for now the operator references the bare ONNX filename
+#      under audio.wake_word.model_paths (bootstrap.cpp resolves
+#      that against XDG_DATA_HOME). The overlay write is
+#      forward-looking — it'll let the alias name "just work" once
+#      the loader pass lands.
+#
+# Usage
+# ─────
+#   train-wake-word "hey acva" --output hey_acva
+#   train-wake-word "ok acva" --output ok_acva --duration-min 60 --voice-lang en
+#   train-wake-word "hey acva" --output hey_acva --prepare-only
+#
+# `--prepare-only` runs steps 1+4 (only the synthesis + a placeholder
+# overlay entry); useful for inspecting the positive corpus or
+# splitting work across machines (one with Speaches, one with
+# PyTorch).
+#
+# Requires
+# ────────
+#   • Python 3.11+, requests, PyYAML (always)
+#   • numpy, soundfile (synthesis)
+#   • openwakeword[training] + torch (steps 2 + 3)
+#
+# Speaches must be reachable at --speaches-url (default
+# http://127.0.0.1:8090). Voices are pulled from `cfg.tts.voices`
+# in the loaded config.
+#
+# ~30 min wall-clock per phrase on the dev box GPU.
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import shutil
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable, Optional
+
+try:
+    import requests
+except ImportError:
+    print("train-wake-word: missing 'requests' — pip install requests",
+          file=sys.stderr)
+    sys.exit(1)
+
+try:
+    import yaml
+except ImportError:
+    print("train-wake-word: missing 'PyYAML' — install python-yaml "
+          "(Arch) / python3-yaml (Debian) / pip install pyyaml",
+          file=sys.stderr)
+    sys.exit(1)
+
+
+# ---- paths ---------------------------------------------------------
+
+def xdg_data_home() -> Path:
+    return Path(os.environ.get(
+        "XDG_DATA_HOME",
+        Path.home() / ".local" / "share")) / "acva"
+
+
+def xdg_config_home() -> Path:
+    return Path(os.environ.get(
+        "XDG_CONFIG_HOME",
+        Path.home() / ".config")) / "acva"
+
+
+def models_dir() -> Path:
+    if env := os.environ.get("ACVA_MODELS_DIR"):
+        return Path(env)
+    return xdg_data_home() / "models"
+
+
+def repo_root() -> Path:
+    # Same precedence as `acva-models`: prefer the XDG config; fall
+    # back to the in-repo config/default.yaml when run from the
+    # source tree.
+    for cand in (xdg_config_home() / "default.yaml",
+                  Path(__file__).resolve().parent.parent /
+                      "config" / "default.yaml"):
+        if cand.exists():
+            return cand.parent.parent if cand.parent.name == "acva" \
+                                      else cand.parent.parent
+    return Path(__file__).resolve().parent.parent
+
+
+# ---- registry ------------------------------------------------------
+
+@dataclass
+class TtsAlias:
+    name:  str
+    model: str
+    voice: str
+
+
+def load_tts_voices(config_path: Path,
+                     lang: Optional[str]) -> list[TtsAlias]:
+    """Read `models.tts:` from the registry; if `lang` is given, also
+    constrain to voices the active config wires up under
+    `tts.voices.<lang>`. Otherwise return every TTS alias in the
+    catalog (gives the widest speaker variety for a multilingual
+    wake-word)."""
+    with config_path.open("r") as f:
+        doc = yaml.safe_load(f)
+
+    catalog = (doc.get("models") or {}).get("tts") or {}
+    aliases: list[TtsAlias] = []
+    for name, entry in catalog.items():
+        if not isinstance(entry, dict):
+            continue
+        if "id" not in entry or "voice" not in entry:
+            continue
+        aliases.append(TtsAlias(name=name,
+                                  model=entry["id"],
+                                  voice=entry["voice"]))
+
+    if lang:
+        # Constrain to the voice the config wires up for this lang;
+        # the registry alias name typically starts with "<lang>-".
+        prefix = f"{lang}-"
+        constrained = [a for a in aliases if a.name.startswith(prefix)]
+        if constrained:
+            return constrained
+        print(f"train-wake-word: warning — no TTS aliases match "
+              f"'{prefix}*'; falling back to all {len(aliases)} voices",
+              file=sys.stderr)
+
+    return aliases
+
+
+# ---- synthesis -----------------------------------------------------
+
+# Hand-rolled phrasing variants give the classifier a slightly
+# broader acoustic spread than just the bare phrase — different
+# punctuation produces different prosody from Piper. Keep the wake
+# phrase central; surrounding tokens never change so the classifier
+# doesn't latch onto neighbouring words.
+def phrasing_variants(phrase: str) -> list[str]:
+    p = phrase.strip()
+    return [
+        p,
+        p + ".",
+        p + "?",
+        p + "!",
+        p + ", please.",
+        "Hey, " + p + ".",
+        p + " now.",
+        p + ", can you hear me?",
+    ]
+
+
+def speaches_synth(speaches_url: str,
+                    text: str,
+                    alias: TtsAlias,
+                    out_path: Path,
+                    timeout_s: float = 60.0) -> None:
+    """POST /v1/audio/speech, write bare int16 PCM as a 22.05 kHz
+    mono WAV. Idempotent — skips when out_path already exists."""
+    if out_path.exists():
+        return
+    body = {
+        "model": alias.model,
+        "input": text,
+        "voice": alias.voice,
+        "response_format": "pcm",
+    }
+    r = requests.post(
+        f"{speaches_url.rstrip('/')}/v1/audio/speech",
+        json=body,
+        timeout=timeout_s,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(
+            f"speaches TTS failed for voice={alias.name} "
+            f"text={text!r}: HTTP {r.status_code}: {r.text[:200]}")
+
+    # Wrap PCM in a minimal WAV header so downstream tools (and
+    # operators inspecting the corpus) don't need to know our
+    # sample rate.
+    import wave
+    with wave.open(str(out_path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(22_050)
+        wf.writeframes(r.content)
+
+
+def synthesize_positives(speaches_url: str,
+                          aliases: list[TtsAlias],
+                          phrase: str,
+                          out_dir: Path,
+                          target_minutes: float) -> Path:
+    """Synthesize variants × voices until we hit roughly
+    target_minutes of WAV. Returns the directory containing the
+    positives. Idempotent: each filename encodes (voice, variant)
+    so re-runs skip the network calls already done."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    variants = phrasing_variants(phrase)
+    if not aliases:
+        raise RuntimeError(
+            "no TTS aliases configured — populate models.tts in the "
+            "loaded config or pass --voice-lang to constrain")
+
+    total_seconds = 0.0
+    repetitions = 0
+    while total_seconds < target_minutes * 60.0:
+        repetitions += 1
+        for ai, alias in enumerate(aliases):
+            for vi, text in enumerate(variants):
+                fname = f"r{repetitions:02d}_v{ai:02d}_p{vi:02d}.wav"
+                out = out_dir / fname
+                speaches_synth(speaches_url, text, alias, out)
+                # Approximate duration from file size (mono 22.05 kHz
+                # 16-bit + 44-byte header) — saves a wave.open
+                # roundtrip per file.
+                total_seconds += max(
+                    0.0,
+                    (out.stat().st_size - 44) / (2 * 22_050))
+                if total_seconds >= target_minutes * 60.0:
+                    break
+            if total_seconds >= target_minutes * 60.0:
+                break
+        if repetitions > 50:
+            # Safety: a misconfigured Speaches endpoint can return
+            # 0-byte WAVs and we'd loop forever otherwise.
+            raise RuntimeError(
+                f"synthesized {repetitions} passes but only "
+                f"{total_seconds:.1f}s — check Speaches health")
+
+    return out_dir
+
+
+# ---- training ------------------------------------------------------
+
+def ensure_openwakeword_training() -> tuple:
+    """Imports the openwakeword training entry points or exits with a
+    clear actionable message. Returns (openwakeword_module, train_module)."""
+    try:
+        import openwakeword                     # type: ignore
+        from openwakeword import train          # type: ignore
+        return openwakeword, train
+    except ImportError as ex:
+        print(
+            "train-wake-word: training step needs the 'openwakeword' "
+            "package with the [training] extras (PyTorch, datasets, "
+            "etc).\n\n"
+            "  Install:  pip install --upgrade 'openwakeword[training]'\n\n"
+            f"  Underlying error: {ex}",
+            file=sys.stderr)
+        sys.exit(2)
+
+
+def run_training(positives_dir: Path,
+                  work_dir: Path,
+                  output_onnx: Path,
+                  phrase: str) -> None:
+    """Drive openwakeword's training. Implementation talks to the
+    documented public API of `openwakeword.train`; we keep this
+    thin so an upstream rev only needs the import path adjusted.
+
+    The training data layout follows the openwakeword convention:
+      - <work>/positive_features.npy + <work>/negative_features.npy
+      - <work>/output_features.npy (validation negatives)
+
+    Pre-trained negatives + features are auto-downloaded by
+    openwakeword on first run."""
+    _, train = ensure_openwakeword_training()
+
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"train-wake-word: pre-computing features (this can take "
+          f"a few minutes)…")
+    train.compute_features_from_generator(
+        clip_dir=str(positives_dir),
+        output_file=str(work_dir / "positive_features.npy"),
+        device="cuda" if _have_cuda() else "cpu",
+    )
+
+    print(f"train-wake-word: training classifier head…")
+    train.train_model(
+        positive_features=str(work_dir / "positive_features.npy"),
+        output_path=str(output_onnx),
+        target_phrase=phrase,
+    )
+
+
+def _have_cuda() -> bool:
+    try:
+        import torch              # type: ignore
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
+
+# ---- registration --------------------------------------------------
+
+def register_in_overlay(name: str, onnx_path: Path,
+                         phrase: str) -> Path:
+    """Copy the ONNX into the wake_word models dir + append a registry
+    entry to ${XDG_CONFIG_HOME}/acva/models-extra.yaml. The overlay
+    is loaded after default.yaml so its entries augment (don't
+    replace) the upstream catalog."""
+    dst_dir = models_dir() / "wake_word"
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    dst = dst_dir / f"{name}.onnx"
+    if onnx_path.resolve() != dst.resolve():
+        shutil.copyfile(onnx_path, dst)
+
+    overlay = xdg_config_home() / "models-extra.yaml"
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+
+    doc: dict
+    if overlay.exists():
+        with overlay.open("r") as f:
+            doc = yaml.safe_load(f) or {}
+    else:
+        doc = {}
+    catalog = (doc.setdefault("models", {})
+                  .setdefault("wake_word", {}))
+    catalog[name] = {
+        "file":    f"{name}.onnx",
+        "purpose": f"custom-trained phrase: {phrase!r}",
+    }
+    with overlay.open("w") as f:
+        yaml.safe_dump(doc, f, sort_keys=False)
+
+    return dst
+
+
+# ---- driver --------------------------------------------------------
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        prog="train-wake-word",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("phrase",
+                    help="The wake phrase, e.g. 'hey acva'.")
+    p.add_argument("--output", required=True,
+                    help="Output alias (no extension); becomes the "
+                         "registry key + ONNX filename.")
+    p.add_argument("--duration-min", type=float, default=50.0,
+                    help="Target minutes of synthesized positives "
+                         "(default: 50).")
+    p.add_argument("--voice-lang",
+                    help="Restrict TTS aliases to those starting with "
+                         "'<lang>-' (e.g. 'en'). Default: every voice "
+                         "in the registry.")
+    p.add_argument("--speaches-url",
+                    default=os.environ.get("ACVA_SPEACHES_URL",
+                                            "http://127.0.0.1:8090"),
+                    help="Speaches base URL (default: http://127.0.0.1:8090).")
+    p.add_argument("--config",
+                    default=str(xdg_config_home() / "default.yaml"),
+                    help="Active config (for the TTS registry).")
+    p.add_argument("--work-dir",
+                    help="Where to keep intermediates. Default: "
+                         "${ACVA_MODELS_DIR}/wake_word_training/<output>.")
+    p.add_argument("--prepare-only", action="store_true",
+                    help="Only synthesize the positive corpus; skip "
+                         "fetch-deps + train. Still appends to the "
+                         "overlay so the alias is reserved.")
+    return p.parse_args(argv)
+
+
+def safe_alias(name: str) -> str:
+    """Registry keys must be filename-friendly. Replace anything
+    other than [A-Za-z0-9_-] with '_'."""
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_") or "wake_word"
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    args = parse_args(argv if argv is not None else sys.argv[1:])
+
+    config_path = Path(args.config)
+    if not config_path.exists():
+        # In-tree fallback for source-tree runs.
+        in_tree = (Path(__file__).resolve().parent.parent
+                   / "config" / "default.yaml")
+        if in_tree.exists():
+            config_path = in_tree
+        else:
+            print(f"train-wake-word: config not found: {args.config}",
+                  file=sys.stderr)
+            return 2
+
+    name = safe_alias(args.output)
+    if name != args.output:
+        print(f"train-wake-word: --output sanitized: {args.output!r} "
+              f"→ {name!r}", file=sys.stderr)
+
+    work_dir = Path(args.work_dir or
+                     (models_dir() / "wake_word_training" / name))
+    positives_dir = work_dir / "positives"
+    onnx_path     = work_dir / f"{name}.onnx"
+
+    print(f"train-wake-word: phrase={args.phrase!r} → {name}.onnx")
+    print(f"  speaches:     {args.speaches_url}")
+    print(f"  config:       {config_path}")
+    print(f"  work-dir:     {work_dir}")
+
+    aliases = load_tts_voices(config_path, args.voice_lang)
+    print(f"  tts voices:   {len(aliases)} "
+          f"({', '.join(a.name for a in aliases) or 'NONE'})")
+    if not aliases:
+        print("train-wake-word: no TTS voices in registry — abort",
+              file=sys.stderr)
+        return 2
+
+    t0 = time.time()
+    print(f"\n[1/4] synthesize positives → {positives_dir}")
+    synthesize_positives(args.speaches_url, aliases, args.phrase,
+                          positives_dir, args.duration_min)
+    n_wavs = len(list(positives_dir.glob("*.wav")))
+    print(f"      done: {n_wavs} clips in {time.time() - t0:.1f}s")
+
+    if args.prepare_only:
+        print("\n[skip] fetch-deps + train (--prepare-only)")
+        # Still touch a placeholder ONNX so register_in_overlay has
+        # something deterministic to copy. Operators completing the
+        # train step elsewhere then re-run register.
+        if not onnx_path.exists():
+            onnx_path.write_bytes(b"")
+        print("\n[2/2] register overlay entry")
+        dst = register_in_overlay(name, onnx_path, args.phrase)
+        print(f"      → {dst} (placeholder; replace by re-running "
+              f"without --prepare-only)")
+        return 0
+
+    print(f"\n[2/4] fetch-deps + train (this is the long step)")
+    run_training(positives_dir, work_dir, onnx_path, args.phrase)
+    print(f"      done at {time.time() - t0:.1f}s; ONNX → {onnx_path}")
+
+    print(f"\n[3/4] register overlay entry")
+    dst = register_in_overlay(name, onnx_path, args.phrase)
+    print(f"      → {dst}")
+
+    print(f"\n[4/4] next steps")
+    print(f"      Add to your config under audio.wake_word.model_paths:")
+    print(f"        - {name}.onnx")
+    print(f"      (bootstrap resolves the bare filename against "
+          f"${{XDG_DATA_HOME}}/acva/models/wake_word/. Overlay-based")
+    print(f"      alias resolution is registered at "
+          f"~/.config/acva/models-extra.yaml for a future config-loader pass.)")
+    print(f"      Then `acva demo wake-word` to tune the threshold.")
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -342,8 +342,10 @@ float WakeWord::Impl::run_inference_step(std::span<const float> audio_chunk) {
 
 float WakeWord::push_frame(std::span<const std::int16_t> samples) {
     float score = 0.0F;
+    bool  inference_ran = false;
     if (test_score_ >= 0.0F) {
         score = test_score_;
+        inference_ran = true;
     } else if (cfg_.enabled && loaded()) {
 #ifdef ACVA_HAVE_ONNXRUNTIME
         auto& I = *impl_;
@@ -354,25 +356,30 @@ float WakeWord::push_frame(std::span<const std::int16_t> samples) {
         }
         // Drain in non-overlapping 1280-sample steps. Each step
         // produces 5 mel frames + (when warm) 1 fresh embedding.
-        // We track the highest score seen across this push so the
-        // gate sees the freshest signal even if `samples` was big
-        // enough for multiple steps.
+        // The pipeline pushes APM-cleaned chunks of ~10 ms (160
+        // samples at 16 kHz), so most calls accumulate without
+        // running inference; we track inference_ran so we don't
+        // clobber a valid last_score with 0 on the in-between
+        // calls.
         while (I.audio_buf.size() >= kAudioStep) {
             std::span<const float> chunk(I.audio_buf.data(), kAudioStep);
             const float s = I.run_inference_step(chunk);
             if (s > score) score = s;
             I.audio_buf.erase(I.audio_buf.begin(),
                               I.audio_buf.begin() + kAudioStep);
+            inference_ran = true;
         }
 #endif
     }
 
-    last_score_.store(score, std::memory_order_release);
-    if (score >= threshold_.load(std::memory_order_acquire)) {
-        detections_total_.fetch_add(1, std::memory_order_relaxed);
-        const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
-        last_detection_ns_.store(ns, std::memory_order_release);
+    if (inference_ran) {
+        last_score_.store(score, std::memory_order_release);
+        if (score >= threshold_.load(std::memory_order_acquire)) {
+            detections_total_.fetch_add(1, std::memory_order_relaxed);
+            const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            last_detection_ns_.store(ns, std::memory_order_release);
+        }
     }
     return score;
 }

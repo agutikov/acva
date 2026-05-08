@@ -3,21 +3,36 @@
 
 
 
+move existing diagrams and project desing into docs, review, update if anything changed
 
-archive (move) all plans (exept postpone) into docs/history/MVP
+archive (move) all plans docs (exept postpone) into docs/history/MVP
 
-move existing diagrams into docs, review, update if anything changed
-
-
-from now on use stadard planning schema: Milestone -> Phase -> Stage -> Task: M1 -> P1.2 -> S1.2.1 -> T1.2.1.3
-
-
+remove ALL milestones mentioning from code and comments
+existing features now not belong to milestones
+if need to refer to some implementation step - all of them were implemented in MVP
 
 --------------------------------------------------------------------------------
 
-rework M9 and M10 plans into Phases or Stages in next plans, combine with new plans
+BUG: I don't see any metrics in grafana and prometheus
 
-convert plans and docs into single-file design with history of acva creation
+BUG: wake-word has unexpectedly long latency and threshold
+
+--------------------------------------------------------------------------------
+
+from now on use stadard planning schema: Milestone -> Phase -> Stage -> Task: M1 -> P1.2 -> S1.2.1 -> T1.2.1.3
+    Milestones are >2 month
+    Phases are 2-4 weeks
+    Stages are days to weeks
+    Tasks are up to 2 days
+rework M9 and M10 plans into Phases or Stages in next plans, combine with new plans
+start from M1
+also use open questions doc to track questions
+
+---
+
+## Random Ideas
+
+convert plans and docs history into single-file design with history of acva creation
 process it and load into memory + add memory read instructions into context
 so agent can answer questions about itself
 

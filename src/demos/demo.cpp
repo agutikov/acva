@@ -28,11 +28,13 @@ int run_stt       (const config::Config&, std::span<const std::string>);
 int run_tone      (const config::Config&, std::span<const std::string>);
 int run_transcribe(const config::Config&, std::span<const std::string>);
 int run_tts       (const config::Config&, std::span<const std::string>);
+int run_wake_word (const config::Config&, std::span<const std::string>);
+int run_wake_word_offline(const config::Config&, std::span<const std::string>);
 int run_wipe      (const config::Config&, std::span<const std::string>);
 
 namespace {
 
-constexpr std::array<Demo, 20> kDemos{{
+constexpr std::array<Demo, 22> kDemos{{
     {"fsm",      "M0",
      "synthetic FSM driver runs 3 turns end-to-end (no backends needed)",
      run_fsm},
@@ -93,6 +95,12 @@ constexpr std::array<Demo, 20> kDemos{{
     {"wipe",     "M8A",
      "POST /wipe?session + /wipe?all=true roundtrip on a tmp DB — verifies cascade + rollover",
      run_wipe},
+    {"wake-word", "M8C",
+     "live mic + WakeWord — prints per-tick confidence + max/above-threshold summary",
+     run_wake_word},
+    {"wake-word-offline", "M8C",
+     "offline replay: WAV → Speaches STT + WakeWord per-second scores (debug aid)",
+     run_wake_word_offline},
 }};
 
 } // namespace

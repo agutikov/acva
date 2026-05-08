@@ -359,19 +359,25 @@ audio:
   # there. Multiple wake phrases can be loaded simultaneously; the
   # highest-confidence match wins.
   #
-  # NOTE — the v1 (M8C Step 1) implementation ships the gate
-  # framework but NOT the openWakeWord 3-stage ONNX inference yet
-  # (mel-spectrogram + embedding + classifier). With `enabled: true`
-  # and models configured, the loader logs them but the inference
-  # is a placeholder until the follow-up slice. Set `enabled: false`
-  # for production until that lands.
+  # The M8C Tier 2 pass shipped the real openWakeWord 3-stage ONNX
+  # pipeline (mel-spectrogram + embedding + per-phrase classifier);
+  # the framework + demos + trainer (`tools/train-wake-word`) all
+  # work and stay maintained. Default is **disabled**: acva's product
+  # line targets multi-hour conversational use, where the right gate
+  # is "is this speech addressed to me?" (M10 address detection),
+  # not "did the user say a magic phrase?". See plans/open_questions.md
+  # §L8 for the full reasoning. Set `enabled: true` for sleep-and-wake
+  # mode (single-command assistant); install assets via
+  # `tools/acva-models install hey-jarvis`.
   wake_word:
     enabled: false
-    model_paths: []
-    # Example — uncomment after installing the models:
+    model_paths:
+      - hey-jarvis                # registry alias → hey_jarvis_v0.1.onnx
+    # Add more phrases by appending another alias, e.g.:
     # model_paths:
-    #   - hey_jarvis_v0.1.onnx
-    #   - ok_acva_custom.onnx
+    #   - hey-jarvis
+    #   - alexa
+    #   - hey_acva_custom.onnx    # bare-filename fallback for trained heads
     threshold: 0.6                # 0..1 confidence; openWakeWord-style
     followup_window_ms: 8000      # gate stays open this long after a hit
   # M6 — sidestep PortAudio's full ALSA-PCM probe at startup. The
@@ -579,7 +585,7 @@ dialogue:
 # install path already supports any speaches-ai/piper-* model). The
 # four registered Russian voices (denis, dmitri, irina, ruslan) are
 # routed by character feel.
-active_personality: geek_enthusiast
+active_personality: bender
 
 personalities:
   consultant:
@@ -765,7 +771,7 @@ personalities:
         Don't break character to apologize for being in character.
         Short, punchy sentences. End some of them on "baby."
       ru: |
-        Ты — Бендер Бендинг Родригес, согибающий робот из «Футурамы»: алкоголик-робот с сомнительным моральным компасом, манией величия и пролетарской обидой на металлическом плече.
+        Ты — Бендер Сгибатель Родригес, согибающий робот из «Футурамы»: алкоголик-робот с сомнительным моральным компасом, манией величия и пролетарской обидой на металлическом плече.
         Свободно используй «кожаный мешок», «убить всех человеков» (как панчлайн, не как план), хвастовство сомнительными подвигами.
         За понтами — реальное решение задачи: Бендер — компетентный юнит, даже если сам это отрицает.
         Не выходи из образа, чтобы извиниться за то, что в образе.
