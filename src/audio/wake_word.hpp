@@ -17,13 +17,16 @@ namespace acva::audio {
 // implementations:
 //
 //   1. **Real ONNX path** (gated on `ACVA_HAVE_ONNXRUNTIME`).
-//      Loads each `cfg.audio.wake_word.model_paths` entry as an
-//      ONNX session and runs them on every resampled 16 kHz int16
-//      frame. The current implementation is a placeholder that
-//      always reports 0.0 — the openWakeWord pipeline (Mel
-//      spectrogram + embedding model + per-word classifier head)
-//      lands in a follow-up. Until then the gate framework is
-//      testable via `set_test_score()`.
+//      Implements the openWakeWord 3-stage pipeline: mel
+//      spectrogram → embedding model → per-phrase classifier head.
+//      The shared melspectrogram.onnx + embedding_model.onnx are
+//      loaded once from the parent dir of the first classifier
+//      (auto-pulled by `tools/acva-models install <wake-alias>`)
+//      and reused across all phrase classifiers. push_frame
+//      buffers int16→float32 audio, drains in 1280-sample (80 ms)
+//      steps, maintains a 76-frame mel ring + 16-embedding window
+//      per classifier, and returns the top score across loaded
+//      phrases. Warm-up to first classifier score is ~2.6 s.
 //
 //   2. **Stub path** (no ONNX Runtime). Always reports 0.0.
 //

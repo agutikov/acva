@@ -97,6 +97,7 @@ set(_acva_integration_sources
     test_speaches_smoke.cpp
     test_speaches_wedge.cpp
     test_vad.cpp
+    test_wake_word_smoke.cpp
 )
 
 if(ACVA_HAVE_LIBDATACHANNEL)

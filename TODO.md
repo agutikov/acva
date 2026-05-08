@@ -3,8 +3,19 @@
 
 
 
+
+archive (move) all plans (exept postpone) into docs/history/MVP
+
+move existing diagrams into docs, review, update if anything changed
+
+
+from now on use stadard planning schema: Milestone -> Phase -> Stage -> Task: M1 -> P1.2 -> S1.2.1 -> T1.2.1.3
+
+
+
 --------------------------------------------------------------------------------
 
+rework M9 and M10 plans into Phases or Stages in next plans, combine with new plans
 
 convert plans and docs into single-file design with history of acva creation
 process it and load into memory + add memory read instructions into context
@@ -85,7 +96,7 @@ Followups:
     - diagrams and presentations
     - quiz
     - web search
-- web ui - plans/web_ui_architecture.md
+- web ui - web_ui_architecture.md
     - builtin monitoring with charts.js
 - docs, readme for advanced users plus arch overview, internals in docs
 - MacOS Metal
@@ -93,7 +104,7 @@ Followups:
 
 Other potential improvements ???
 
-all-in-one C++ app (llama.cpp + speeches, libs instead of servers) ???
+all-in-one C++ app (llama.cpp + whisper.cpp + others, libs instead of servers) ???
 
 ?? Interleaving with players (music, browser, etc)
 
@@ -136,7 +147,7 @@ drift policy
 Installations:
 - docker
 - native packages - systemd service with deps, deb, rpm, ...
-- native all-in-one - snap/flatpack/appimage with/wo servers
+- native all-in-one package - snap/flatpack/appimage with/wo servers
 - ??? single all-in-one executable, run as single process
 
 UX:

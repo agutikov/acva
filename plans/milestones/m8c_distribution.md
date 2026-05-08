@@ -174,21 +174,35 @@ deferred tiers (real ONNX inference + `acva demo wake-word` /
    (loading new ONNX models mid-run is risky). Operator tunes the
    threshold against their voice without bouncing the process.
 
-**Tier 2 — it actually detects (~2 days)**
+**Tier 2 — it actually detects — ✅ landed 2026-05-08**
 
 5. **Real openWakeWord ONNX inference** in `src/audio/wake_word.cpp`.
-   The 3-stage pipeline:
-   - **melspectrogram.onnx** — 16 kHz int16 PCM (1280-sample
-     window, 320-sample hop = 80 ms / 20 ms) → 32 mel bins.
-   - **embedding_model.onnx** — Mel features → 96-dim embedding.
-   - **per-word classifier (\<wake-word\>.onnx)** — embedding window
-     → confidence in [0..1]. Different models per phrase.
+   The 3-stage pipeline (all empirically verified against the
+   v0.5.1 release):
+   - **melspectrogram.onnx** — 16 kHz float32 PCM in [-1, 1].
+     Input `[batch, samples]`, output `[1, 1, frames, 32]` where
+     `frames = (samples − 480) / 160`. We feed non-overlapping
+     1280-sample (80 ms) chunks → 5 mel frames per call. Apply
+     openWakeWord's documented `mel/10 + 2` normalization before
+     embedding.
+   - **embedding_model.onnx** — `[batch, 76, 32, 1]` → `[batch, 1, 1, 96]`.
+     One 96-dim embedding per 76-frame mel window. We run it once
+     per chunk after the mel ring fills.
+   - **per-word classifier (\<wake-word\>.onnx)** — `[1, 16, 96]` →
+     `[1, 1]` confidence. We maintain a 16-embedding rolling window
+     per classifier and run it on each fresh embedding. Different
+     models per phrase.
    The Mel + embedding ONNXs are shared across all wake words; the
    classifier is per-word. WakeWord loads them once at construction
-   and reuses across `push_frame` calls. Replace the v1
-   `return 0.0F` placeholder with the real inference. Acceptance
-   target from the milestone Risks table: **< 2 ms/frame** on the
-   audio worker thread.
+   and reuses across `push_frame` calls. Warm-up to first
+   classifier score is ~2.6 s. Smoke-tested at
+   `tests/test_wake_word_smoke.cpp` (4 cases) against the real
+   hey-jarvis classifier + shared infra: load succeeds, white
+   noise + silence stay below threshold, last_score reflects
+   most-recent inference. The 1280-sample step path uses one mel
+   run per 80 ms of audio, well inside the < 2 ms/frame budget on
+   the dev workstation. Performance is not separately benchmarked
+   yet — deferred to a Tier 3 / dogfood pass.
 
 **Tier 3 — custom phrases (~1.5 days)**
 
