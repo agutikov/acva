@@ -513,7 +513,7 @@ buildable. M7 builds the discriminator.)
 If working AEC reveals that VAD's `onset_threshold = 0.5` /
 `offset_threshold = 0.35` need adjustment on the AEC-cleaned
 signal, document the new defaults in
-`plans/open_questions.md` section L. Most likely outcome: the
+`docs/history/MVP/open_questions.md` section L. Most likely outcome: the
 defaults survive — Silero's training data already includes
 AEC-style cleaned audio.
 
@@ -532,7 +532,7 @@ Based on Path B passing:
   / phantom STT loops" symptom section added, points at
   `acva demo aec-record` + `scripts/aec_analyze.py` and maps
   per-band verdicts to actions.
-- `plans/milestones/m6_aec.md` — gate 4 flipped to "PASS via
+- `docs/history/MVP/milestones/m6_aec.md` — gate 4 flipped to "PASS via
   Path B" (gates 1, 3 pending soak/probe).
 
 ---

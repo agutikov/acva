@@ -8,7 +8,7 @@
 > already in production** and focuses on swapping the request/response
 > STT client for Speaches' streaming endpoint plus the
 > Dialogue-Manager-side speculation work. See
-> `plans/milestones/m4b_speaches_consolidation.md` and `open_questions.md` L1.
+> `docs/history/MVP/milestones/m4b_speaches_consolidation.md` and `open_questions.md` L1.
 > Step 1 below is preserved for historical context but no longer drives
 > the milestone.
 >
@@ -85,7 +85,7 @@ Three things land together:
 
 ## Step 1 — Choose the streaming STT engine (decision point)
 
-Upstream `whisper.cpp/examples/server` (used through M4 in Compose) is **request/response only**. To stream partials we have three options. The decision is logged as an open question in `plans/open_questions.md`; pick at the start of M5.
+Upstream `whisper.cpp/examples/server` (used through M4 in Compose) is **request/response only**. To stream partials we have three options. The decision is logged as an open question in `docs/history/MVP/open_questions.md`; pick at the start of M5.
 
 ### Option A — Custom C++ wrapper around whisper.cpp's `stream` example
 

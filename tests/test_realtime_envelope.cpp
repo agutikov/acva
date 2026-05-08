@@ -3,7 +3,7 @@
 // `oai-events` data channel into raw OpenAI Realtime event JSON.
 //
 // The wire format is documented in
-// `plans/milestones/m5_streaming_stt.md` (header) and the project
+// `docs/history/MVP/milestones/m5_streaming_stt.md` (header) and the project
 // memory note `project_m5_realtime_spike.md` (resolved facts §3).
 
 #include "stt/realtime_envelope.hpp"

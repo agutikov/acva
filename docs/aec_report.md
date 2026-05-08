@@ -694,7 +694,7 @@ block + `docs/troubleshooting.md` "phantom STT loops" section.
 
 Two non-obvious follow-on fixes were required between gate 4 PASS
 (2026-05-03) and gate 1 PASS (2026-05-04). Both are recorded in
-`plans/open_questions.md` § L7:
+`docs/history/MVP/open_questions.md` § L7:
 
 - **`src/orchestrator/system_aec.cpp` PA name parsing on module
   reuse.** Pre-fix code hardcoded `echo-cancel-{source,sink}` (the

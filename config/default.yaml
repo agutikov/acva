@@ -9,7 +9,7 @@
 #   M6: apm
 #   M7: barge_in, models
 #
-# See plans/project_design.md for the full schema.
+# See docs/project_design.md for the full schema.
 
 # ----- Model registry -----
 #
@@ -28,7 +28,7 @@
 # llama-server loads is set by `ACVA_LLM_MODEL` in
 # `packaging/compose/.env`. M8A (admin/state) wires the resolved
 # filename into a model-controller sidecar so the alias becomes
-# load-bearing — see `plans/milestones/m8a_admin_state.md`.
+# load-bearing — see `docs/history/MVP/milestones/m8a_admin_state.md`.
 models:
   llm:
     qwen2.5-7b:
@@ -365,7 +365,7 @@ audio:
   # work and stay maintained. Default is **disabled**: acva's product
   # line targets multi-hour conversational use, where the right gate
   # is "is this speech addressed to me?" (M10 address detection),
-  # not "did the user say a magic phrase?". See plans/open_questions.md
+  # not "did the user say a magic phrase?". See docs/history/MVP/open_questions.md
   # §L8 for the full reasoning. Set `enabled: true` for sleep-and-wake
   # mode (single-command assistant); install assets via
   # `tools/acva-models install hey-jarvis`.
@@ -479,7 +479,7 @@ apm:
 # off the cancellation cascade (LLM stream cancel → TtsBridge drain →
 # PlaybackQueue drain → audio thread silences). Gated on AEC
 # convergence so the assistant's own voice doesn't trip it. See
-# plans/milestones/m7_barge_in.md.
+# docs/history/MVP/milestones/m7_barge_in.md.
 barge_in:
   enabled: true
   # Set false on headphone-only setups where AEC never converges

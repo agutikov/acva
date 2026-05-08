@@ -3,15 +3,9 @@
 
 
 
-move existing diagrams and project desing into docs; review, update if anything changed
 
-archive (move) all plans docs (exept postpone) into docs/history/MVP
 
-remove ALL milestones mentioning from code and comments
-existing features now not belong to milestones
-if need to refer to some implementation step - all of them were implemented in MVP
-
---------------------------------------------------------------------------------
+MVP bugs - put every in a separate file in plans/bugs/
 
 BUG: I don't see any metrics in grafana and prometheus
 
@@ -26,7 +20,8 @@ from now on use stadard planning schema: Milestone -> Phase -> Stage -> Task: M1
     Phases are 2-4 weeks
     Stages are days to weeks
     Tasks are up to 2 days
-rework M9 and M10 plans into Phases or Stages in next plans, combine with new plans
+
+rework postponed plans into Phases or Stages in next plans, combine with new plans
 start from M1
 also use open questions doc to track questions
 

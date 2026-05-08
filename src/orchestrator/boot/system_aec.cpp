@@ -118,7 +118,7 @@ std::optional<detail::EchoCancelModule> find_existing_echo_cancel() {
 // env vars set up next match. Returns the new module id or "" on
 // failure.
 //
-// Args mirror `plans/milestones/m6b_aec_hardware.md` § 3.1: webrtc
+// Args mirror `docs/history/MVP/milestones/m6b_aec_hardware.md` § 3.1: webrtc
 // backend, NS + HPF on, AGC analog off (PipeWire's analog AGC
 // fights with our APM AGC; better off here too).
 std::string load_module() {

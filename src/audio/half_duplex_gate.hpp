@@ -23,7 +23,7 @@ namespace acva::audio {
 //
 // **Trade-off:** no barge-in. The user can't interrupt the assistant
 // because the mic isn't being listened to. This is the explicit
-// alternative to M6 AEC — see plans/milestones/m5_streaming_stt.md
+// alternative to M6 AEC — see docs/history/MVP/milestones/m5_streaming_stt.md
 // "Half-duplex" section. Defaults off.
 //
 // **Threading:** lock-free. `set_speaking` is called from the

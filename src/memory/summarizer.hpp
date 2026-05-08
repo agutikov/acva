@@ -29,7 +29,7 @@ namespace acva::memory {
 // while a summary is running are coalesced (boolean job_pending_); the
 // worker re-checks the threshold after each run.
 //
-// Per plans/milestones/m1_llm_memory.md C.2.1, M1 lands the machinery
+// Per docs/history/MVP/milestones/m1_llm_memory.md C.2.1, M1 lands the machinery
 // only — prompt iteration is M8.
 class Summarizer {
 public:

@@ -245,7 +245,7 @@ speculation for the rest of the minute.
   filters only finals leaves partials feeding speculation off
   hallucinated prefixes. Do it once, do it right.
 
-  See `plans/milestones/m10_conversational_ux.md` for the
+  See `m10_conversational_ux.md` (sibling) for the
   complementary "address detection" angle: even a real, correctly-
   transcribed phrase like "уберите камеру" might not be addressed at
   the assistant. M9 handles the wire-level filter; M10 handles the

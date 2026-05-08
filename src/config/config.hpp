@@ -458,7 +458,7 @@ struct ApmConfig {
     // PULSE_SINK / PULSE_SOURCE env vars). Recommended on Linux desktops
     // where PipeWire is the audio server and the in-process WebRTC APM
     // doesn't cancel well on the integrated codec — see
-    // docs/aec_report.md § 6 + plans/milestones/m6b_aec_hardware.md
+    // docs/aec_report.md § 6 + docs/history/MVP/milestones/m6b_aec_hardware.md
     // Step 3. When this is on, set `aec_enabled: false` so the
     // in-process AEC doesn't try to subtract the echo a second time
     // (it has nothing to cancel and the convergence transient produces
@@ -517,7 +517,7 @@ struct UtteranceConfig {
 // M7 — barge-in detector. Promotes a VAD `SpeechStarted` during
 // `Speaking` into a `UserInterrupted` event, but only after AEC has
 // converged enough to ignore the assistant's own voice. See
-// plans/milestones/m7_barge_in.md §1.
+// docs/history/MVP/milestones/m7_barge_in.md §1.
 struct BargeInConfig {
     // Master switch. When false the detector is not constructed and
     // M0's pre-barge-in behaviour stands (FSM has no detection layer
@@ -578,7 +578,7 @@ struct BargeInConfig {
 // the OpenAI-endpoint label, and the actual GGUF llama-server loads
 // is set by ACVA_LLM_MODEL in packaging/compose/.env. M8A wires the
 // resolved filename into a model-controller sidecar so the alias
-// becomes load-bearing — see `plans/milestones/m8a_admin_state.md`.
+// becomes load-bearing — see `docs/history/MVP/milestones/m8a_admin_state.md`.
 
 struct LlmModelEntry {
     // GGUF filename inside ${ACVA_MODELS_DIR}/llama.cpp/. Becomes

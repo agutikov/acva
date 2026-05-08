@@ -6,9 +6,9 @@
 
 **Code-complete through M8C.** All eleven implementation milestones (M0 → M1 → M2 → M3 → M4 → M4B → M5 → M6 → M6B → M7 → M7B → M8A → M8B → M8C) have shipped. The full speech-to-speech loop runs end-to-end against the Compose stack: PortAudio → resample → AEC → VAD → streaming STT → dialogue FSM → LLM (SSE) → sentence splitter → TTS → playback queue → speakers. Barge-in cancels mid-speech; SQLite-backed turn lifecycle survives crashes; Prometheus + Grafana observability stack ships alongside; warm restart preserves session continuity. Test suite: 376 unit cases (no external deps) + 13 integration cases (real Silero + live Speaches), all green.
 
-The remaining M8C work is the documentation pass and a stretch packaging set (AUR `PKGBUILD`, `.deb`, image-digest pinning). Full milestone history in `plans/milestones/`; architectural revisions and resolved questions in `plans/open_questions.md` §L.
+Stretch packaging (AUR `PKGBUILD`, `.deb`, image-digest pinning, observability project-label cleanup, man page, fresh-VM bare-metal acceptance) is parked at [`plans/postpone/m8c_packaging_stretch.md`](plans/postpone/m8c_packaging_stretch.md) — none MVP-blocking. Full milestone history in `docs/history/MVP/milestones/`; architectural revisions and resolved questions in `docs/history/MVP/open_questions.md` §L.
 
-The product target is **always-listening conversational mode**, not press-button-and-ask. Wake-word (M8C) ships off-by-default; the conversational gate ("is the user addressing me?") moves to M10 address detection — see `plans/open_questions.md` §L8.
+The product target is **always-listening conversational mode**, not press-button-and-ask. Wake-word (M8C) ships off-by-default; the conversational gate ("is the user addressing me?") moves to M10 address detection — see `docs/history/MVP/open_questions.md` §L8.
 
 ## What it does
 
@@ -45,13 +45,13 @@ Mic → Resample → APM (AEC/NS/AGC) → VAD → Endpointer → Utterance Buffe
 - **Cancellation is structural**: every long-running operation carries a turn ID; barge-in invalidates the turn ID and stale work is rejected at every queue boundary.
 - **AEC is system-level by default**: PipeWire `module-echo-cancel` upstream of acva delivers 25–46 dB of speech-band cancellation on the dev workstation. The in-process WebRTC APM stays compiled but disabled; see `docs/aec_report.md` for the full M6 + M6B analysis.
 
-See `plans/project_design.md` for the complete architecture and `docs/observability.svg` for the runtime topology.
+See `docs/project_design.md` for the complete architecture and `docs/observability.svg` for the runtime topology.
 
 ## Tech Stack
 
 | Concern            | Choice                                                          |
 |--------------------|-----------------------------------------------------------------|
-| Language           | C++23 (no modules, no Cobalt — see `plans/open_questions.md` §L2) |
+| Language           | C++23 (no modules, no Cobalt — see `docs/history/MVP/open_questions.md` §L2) |
 | Async / threads    | `std::thread` + dedicated workers; SPSC ring across audio boundary |
 | Audio I/O          | PortAudio + soxr (resample)                                      |
 | AEC / NS / AGC     | PipeWire `module-echo-cancel` (default) + WebRTC APM (in-process, opt-in) |
@@ -134,7 +134,7 @@ README.md, CLAUDE.md, LICENSE, .editorconfig, .gitignore
 - OS: Linux. Manjaro/Arch is primary, Ubuntu 24.04 LTS secondary.
 - Audio: USB or built-in mic + speakers. PipeWire ≥ 1.0 recommended for the system-AEC path.
 
-VRAM budget on the 4060: llama-7B Q4_K_M (~5 GB) + faster-whisper-large-v3-turbo (~1.6 GB) + Piper voices (~250 MB) ≈ 6.8 GB resident, leaving ~1.2 GB headroom. The Speaches `WHISPER__TTL=-1` pin is non-negotiable on this card — the default 5-min auto-evict combined with faster-whisper's [#992](https://github.com/SYSTRAN/faster-whisper/issues/992) leaks ~300 MB per unload cycle and OOMs after a few reloads. See `plans/open_questions.md` §L7 for the rationale.
+VRAM budget on the 4060: llama-7B Q4_K_M (~5 GB) + faster-whisper-large-v3-turbo (~1.6 GB) + Piper voices (~250 MB) ≈ 6.8 GB resident, leaving ~1.2 GB headroom. The Speaches `WHISPER__TTL=-1` pin is non-negotiable on this card — the default 5-min auto-evict combined with faster-whisper's [#992](https://github.com/SYSTRAN/faster-whisper/issues/992) leaks ~300 MB per unload cycle and OOMs after a few reloads. See `docs/history/MVP/open_questions.md` §L7 for the rationale.
 
 ## Quickstart — Docker Compose (default dev path)
 
@@ -321,9 +321,9 @@ For longer runs:
 
 ## Plans & docs
 
-- **`plans/project_design.md`** — architecture source of truth (sections referenced throughout the codebase comments).
-- **`plans/open_questions.md`** — resolved + open decisions; §L holds implementation-driven revisions.
-- **`plans/milestones/m{0..8}_*.md`** — per-milestone implementation history.
+- **`docs/project_design.md`** — architecture source of truth (sections referenced throughout the codebase comments).
+- **`docs/history/MVP/open_questions.md`** — resolved + open decisions; §L holds implementation-driven revisions.
+- **`docs/history/MVP/milestones/m{0..8}_*.md`** — per-milestone implementation history.
 - **`docs/aec_report.md`** — M6 + M6B AEC analysis.
 - **`docs/troubleshooting.md`** — symptom-first guide.
 - **`docs/observability.{svg,pdf}`** — runtime topology diagram.

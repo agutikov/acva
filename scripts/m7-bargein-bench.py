@@ -9,7 +9,7 @@
 #
 # What this DOES NOT cover: real-mic-driven barge-in (BargeInDetector +
 # AEC gate). That's the manual 50-trial test in
-# plans/milestones/m7_barge_in.md §5 — see Step 5 (deferred).
+# docs/history/MVP/milestones/m7_barge_in.md §5 — see Step 5 (deferred).
 #
 # Requires: docker stack (llama + speaches) up, models installed, and
 # `_build/dev/acva` already compiled.

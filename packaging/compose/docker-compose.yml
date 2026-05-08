@@ -1,6 +1,6 @@
 # acva — model backend stack for dev.
 #
-# This file follows plans/milestones/m1_llm_memory.md §B verbatim:
+# This file follows docs/history/MVP/milestones/m1_llm_memory.md §B verbatim:
 #   - upstream images, no custom Dockerfiles
 #   - model files live on the host and are bind-mounted read-only
 #   - everything binds to 127.0.0.1 so containers stay private to the host

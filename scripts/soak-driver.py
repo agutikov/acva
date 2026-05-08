@@ -7,7 +7,7 @@ acting on the `voice_speaches_wedged` metric (the M8B Step 1 wedge-
 detection signal) by issuing `docker compose restart speaches`.
 
 On exit, writes a soak-report.txt summarizing the acceptance criteria
-from `plans/milestones/m8b_observability.md`:
+from `docs/history/MVP/milestones/m8b_observability.md`:
 
     duration:        4 h
     crashes:         0

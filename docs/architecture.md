@@ -1,9 +1,9 @@
 # acva — Architecture
 
 A condensed primer for contributors. The full source-of-truth is
-`plans/project_design.md`; this doc distils what you need to navigate
+`docs/project_design.md`; this doc distils what you need to navigate
 the codebase. Implementation-driven revisions live in
-`plans/open_questions.md` §L — when this doc and §L disagree, §L wins.
+`docs/history/MVP/open_questions.md` §L — when this doc and §L disagree, §L wins.
 
 ## What it is
 
@@ -366,11 +366,11 @@ block on `busy_timeout=5000`.
 
 ## Where to read more
 
-- `plans/project_design.md` — the source of truth, sectioned for
+- `docs/project_design.md` — the source of truth, sectioned for
   reference. Code comments cite it as `§N.M`.
-- `plans/open_questions.md` §L — implementation-driven revisions.
+- `docs/history/MVP/open_questions.md` §L — implementation-driven revisions.
   Read this before assuming any A–K answer is still in force.
-- `plans/milestones/m{0..8}_*.md` — per-milestone implementation
+- `docs/history/MVP/milestones/m{0..8}_*.md` — per-milestone implementation
   history.
 - `docs/aec_report.md` — the M6 + M6B AEC analysis (why system AEC
   beats in-process APM on this hardware class).

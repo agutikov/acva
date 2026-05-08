@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------
+// MVP-ERA SNAPSHOT (last refreshed pre-M4B Speaches consolidation).
+// Reflects the original plan as it stood through M0–M2; later
+// milestones (M4B, M8A/B/C) reshaped the compose stack, demos,
+// and observability surface. Treat as historical reference.
+// For current layout see ../../README.md and ../architecture.md.
+// ---------------------------------------------------------------
 // 06_business_logic.dot — business-logic / behavioural view of acva.
 // Captures *what the system does for the user*, not its file layout:
 //
@@ -11,8 +18,8 @@
 //
 // Render: dot -Tsvg 06_business_logic.dot -o 06_business_logic.svg
 //
-// All policies referenced in plans/project_design.md §6, §9, §10 (and the
-// consequences in plans/milestones/m1_llm_memory.md and m2_supervision.md).
+// All policies referenced in docs/project_design.md §6, §9, §10 (and the
+// consequences in docs/history/MVP/milestones/m1_llm_memory.md and m2_supervision.md).
 
 digraph BusinessLogic {
   rankdir=TB;

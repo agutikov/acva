@@ -2,7 +2,7 @@
 # acva soak — M8B Step 1.
 #
 # Runs the 4-hour soak harness defined in
-# `plans/milestones/m8b_observability.md`. Spawns `acva --stdin` via
+# `docs/history/MVP/milestones/m8b_observability.md`. Spawns `acva --stdin` via
 # scripts/soak-driver.py, which feeds prompts, polls /metrics, and
 # auto-restarts the speaches container on the wedge metric.
 #

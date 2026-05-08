@@ -135,5 +135,5 @@ The units in this directory are **structural placeholders** —
 syntactically valid systemd, with paths that match the canonical
 dev-box layout. End-to-end validation on a clean Manjaro / Ubuntu
 24.04 box is the M8C acceptance gate (Step 2 in
-`plans/milestones/m8c_distribution.md`). Production deployments
+`docs/history/MVP/milestones/m8c_distribution.md`). Production deployments
 should test on a fresh VM before relying on these.

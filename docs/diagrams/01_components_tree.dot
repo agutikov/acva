@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------
+// MVP-ERA SNAPSHOT (last refreshed pre-M4B Speaches consolidation).
+// Reflects the original plan as it stood through M0–M2; later
+// milestones (M4B, M8A/B/C) reshaped the compose stack, demos,
+// and observability surface. Treat as historical reference.
+// For current layout see ../../README.md and ../architecture.md.
+// ---------------------------------------------------------------
 // 01_components_tree.dot — package / component tree of the acva repository.
 //
 // Render: dot -Tpng 01_components_tree.dot -o 01_components_tree.png
@@ -157,7 +164,7 @@ digraph ComponentsTree {
   Oq [label="open_questions.md\n(§L = post-impl revisions)", fillcolor="#3B82F6", fontcolor=white, shape=note];
   Plans -> {Pd Oq};
 
-  Mil [label="plans/milestones/", fillcolor="#1D4ED8", fontcolor=white, shape=folder];
+  Mil [label="docs/history/MVP/milestones/", fillcolor="#1D4ED8", fontcolor=white, shape=folder];
   Plans -> Mil;
 
   M0 [label="m0_skeleton.md ✅",         fillcolor="#22C55E", fontcolor=white];

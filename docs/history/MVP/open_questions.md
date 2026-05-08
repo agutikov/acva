@@ -325,7 +325,7 @@ Decisions that surfaced during M0/M1 implementation, post-interview. These super
   - M5 estimate drops from 2–3 weeks to **1.5–2 weeks**: engine selection is done, request/response STT client already shipped (in M4B), streaming becomes a swap of one client implementation against the same event surface.
   - Compose collapses from `llama` + `whisper` + `piper` to `llama` + `speaches`.
   - `cfg.tts.voices[*].url` → `cfg.tts.base_url` + per-language `voice_id`. One-time config migration; no production deploys yet so this is acceptable.
-- See `plans/milestones/m4b_speaches_consolidation.md` for the full plan.
+- See `docs/history/MVP/milestones/m4b_speaches_consolidation.md` for the full plan.
 
 **L2. C++23 baseline, not C++20.** *(resolved retroactively)*
 - The C++20 lock from B-section was inadvertently violated by glaze 7.x, which forces `-std=c++23` transitively. C++23 STL features (std::expected, deducing-this, etc.) are now fair game.
@@ -351,7 +351,7 @@ Decisions that surfaced during M0/M1 implementation, post-interview. These super
 **L6. M5 streaming partials + speculation lifted into M9.** *(resolved — scope decision)*
 - Speaches' realtime endpoint as of 2026-05-02 doesn't emit `conversation.item.input_audio_transcription.delta` events: `realtime/input_audio_buffer.py` awaits the full WAV via `transcription_client.create(...)` after `commit` and publishes a single `transcription.completed`.
 - The original M5 Steps 4–5 (FSM `SpeculativeThinking` + `SpeculationGate`) plus the matching acceptance gates (median first-token-ready 300 ms savings, mid-utterance revision, `voice_speculation_*` counters) all depend on `PartialTranscript`. Without partials they're unreachable on Option B.
-- Decision: lift those steps and gates into a new milestone **M9** (`plans/milestones/m9_speculation.md`). M5 ships as "streaming session, no partials" with the speech-to-speech loop closing on `FinalTranscript`. M9 picks up speculation when a partial-transcript source is in place — three options enumerated in the M9 plan (PR Speaches, side-car streaming Whisper, re-platform STT).
+- Decision: lift those steps and gates into a new milestone **M9** (`docs/history/MVP/milestones/m9_speculation.md`). M5 ships as "streaming session, no partials" with the speech-to-speech loop closing on `FinalTranscript`. M9 picks up speculation when a partial-transcript source is in place — three options enumerated in the M9 plan (PR Speaches, side-car streaming Whisper, re-platform STT).
 - This is a real scope change vs. the original L1 decision, but it reflects the cost of either alternative. Switching to Option A (custom whisper.cpp wrapper) at this point in M5 implementation would have been multi-week scope creep; PRing Speaches has uncertain merge timing. Better to ship M5–M8 against what Speaches delivers today and address speculation as its own milestone with its own dependency-research step.
 
 **L7. M6B closed via PipeWire system AEC; in-process APM stays disabled-by-default on this hardware class.** *(resolved 2026-05-04)*

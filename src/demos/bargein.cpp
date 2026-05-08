@@ -58,7 +58,7 @@ std::filesystem::path tmp_db_path() {
 //
 // What it does NOT cover: real-mic-driven barge-in (the BargeInDetector
 // + AEC gate). That's `acva demo capture` + `aec-record` + the manual
-// 50-trial test in plans/milestones/m7_barge_in.md §5.
+// 50-trial test in docs/history/MVP/milestones/m7_barge_in.md §5.
 int run_bargein(const config::Config& orig_cfg,
                  std::span<const std::string> args) {
     using namespace std::chrono;

@@ -32,7 +32,7 @@
 > the in-process path ineffective on this hardware (M6 § 5.2).  Path
 > B (system AEC via PipeWire) sidesteps both, and M6B Step 3.2 wired
 > it as the recommended Linux desktop default — see
-> `plans/milestones/m6b_aec_hardware.md` § 3.2.  Full analysis in
+> `docs/history/MVP/milestones/m6b_aec_hardware.md` § 3.2.  Full analysis in
 > `docs/aec_report.md`.
 
 ## Goal
@@ -232,7 +232,7 @@ audio:
 
 ## Step 7 — Re-baseline VAD thresholds (moved to M6B Step 4)
 
-After APM is in place, re-run the M4 false-start fixtures with the cleaned signal. Tune `vad.onset_threshold` and `vad.offset_threshold` if needed. Document any change in `plans/open_questions.md` as a tuning note (no new question; just an outcome).
+After APM is in place, re-run the M4 false-start fixtures with the cleaned signal. Tune `vad.onset_threshold` and `vad.offset_threshold` if needed. Document any change in `docs/history/MVP/open_questions.md` as a tuning note (no new question; just an outcome).
 
 ## Test plan
 

@@ -16,7 +16,7 @@ namespace acva::audio {
 // indices and steady_clock::time_point is anchored on the first call
 // to `on_capture_frames` (so steady_for(0) == that wall-clock instant)
 // and recalibrated on every subsequent call to absorb buffer-time drift
-// — see Step 1 of plans/milestones/m4_audio_vad.md.
+// — see Step 1 of docs/history/MVP/milestones/m4_audio_vad.md.
 //
 // AEC reference alignment in M6 needs both streams sharing one
 // time base. The capture path drives the clock; the playback path reads

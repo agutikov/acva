@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------
+// MVP-ERA SNAPSHOT (last refreshed pre-M4B Speaches consolidation).
+// Reflects the original plan as it stood through M0–M2; later
+// milestones (M4B, M8A/B/C) reshaped the compose stack, demos,
+// and observability surface. Treat as historical reference.
+// For current layout see ../../README.md and ../architecture.md.
+// ---------------------------------------------------------------
 // 07_task_dependencies.dot — task-level dependency graph spanning all
 // nine milestones (M0..M8). No clusters: milestones are identified
 // purely by node fill colour (palette mirrors project_design.md §17).
@@ -13,7 +20,7 @@
 //     artefact, coloured by the SOURCE milestone. They come from each
 //     milestone plan's "Depends on:" / "Blocks:" lines.
 //
-// Source of truth for tasks: plans/milestones/m{0..8}_*.md.
+// Source of truth for tasks: docs/history/MVP/milestones/m{0..8}_*.md.
 // Source of truth for done-status: CLAUDE.md ("M0 + M1 complete; Next: M2").
 
 digraph TaskDependencies {

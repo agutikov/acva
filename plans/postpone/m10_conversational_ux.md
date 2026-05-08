@@ -177,7 +177,7 @@ for anyway).
 
 M9 owes the wire-level hallucination filter — pattern blocklist on
 `FinalTranscript.text` + realtime-path RMS gate (see
-`plans/milestones/m9_speculation.md` "Known issues to address in M9"
+`m9_speculation.md` (sibling) "Known issues to address in M9"
 for the full bug history from the 2026-05-04 barge-in-probe run).
 M10's address-detection layer is the semantic complement: even a
 real, correctly-transcribed phrase isn't necessarily addressed at

@@ -1,11 +1,26 @@
 # Local Voice AI Orchestrator — Consolidated Project Design & Plan
 
+> **Status:** This is the original consolidated design. The MVP
+> shipped against it through M0–M8C (closed 2026-05-08). Where
+> implementation diverged from the original plan, the divergence is
+> recorded in [`docs/history/MVP/open_questions.md`](history/MVP/open_questions.md)
+> **§L (implementation-driven revisions)** — read §L before assuming
+> any earlier section is still in force. The most load-bearing
+> revisions: §L1 (M5 backend = Speaches, not custom whisper.cpp),
+> §L4 (M5 STT client is session-scoped), §L6 (speculation lifted
+> from M5 to M9), §L7 (system AEC default; in-process APM disabled
+> on the dev hardware class), §L8 (wake-word ships off-by-default;
+> conversational gate moves to M10 address detection). For the
+> contributor-oriented condensation, see
+> [`docs/architecture.md`](architecture.md). For the post-MVP
+> roadmap, see [`plans/postpone/`](../plans/postpone/).
+
 Synthesis of:
 - `local_voice_ai_orchestrator_mvp_cpp_architecture_2026.md` (original design)
 - `architecture_review.md` (first review)
 - Second-pass analysis (this document's author)
 
-Open questions are tracked separately in `plans/open_questions.md`.
+Open questions are tracked separately in [`docs/history/MVP/open_questions.md`](history/MVP/open_questions.md).
 
 ---
 
@@ -167,7 +182,7 @@ digraph Topology {
 
 The STT service runs as a Docker Compose container in dev (since M1.B). CPU execution (saves ~1 GB VRAM for Qwen). Multilingual model, default size **small** (configurable: base / small / medium).
 
-The streaming-partial behavior depends on the chosen engine — see `plans/milestones/m5_streaming_stt.md` and `plans/milestones/m9_speculation.md`:
+The streaming-partial behavior depends on the chosen engine — see `docs/history/MVP/milestones/m5_streaming_stt.md` and `docs/history/MVP/milestones/m9_speculation.md`:
 
 - **Through M4:** upstream `whisper.cpp:server` (`POST` audio, `JSON` back). Request/response only. Sufficient because the orchestrator only feeds full utterances at this stage.
 - **M4B onward:** Speaches via OpenAI-compatible HTTP — request/response.
@@ -769,7 +784,7 @@ digraph Milestones {
 ```
 
 
-Each milestone has a detailed plan in `plans/milestones/`. The summary below is the at-a-glance version.
+Each milestone has a detailed plan in `docs/history/MVP/milestones/`. The summary below is the at-a-glance version.
 
 ### M0: Skeleton Runtime (1 week) ✅ — see [milestones/m0_skeleton.md](milestones/m0_skeleton.md)
 - C++ app starts, loads YAML config with validation.

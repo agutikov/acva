@@ -23,7 +23,7 @@ namespace acva::audio {
 // pull N samples whose first sample was emitted at capture_time. Caller
 // supplies a fixed delay (the speaker→air→mic round-trip estimate) to
 // shift capture_time backwards before passing it in — see
-// plans/milestones/m6_aec.md §4.
+// docs/history/MVP/milestones/m6_aec.md §4.
 //
 // The reference samples are stored at native playback rate (48 kHz).
 // The wrapper resamples 48 → 16 kHz on the fly in M6 Step 2; we don't

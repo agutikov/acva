@@ -1,5 +1,5 @@
 // Unit tests for HalfDuplexGate — the M5 mic-gating helper for the
-// speakers-without-AEC fallback (see plans/milestones/m5_streaming_stt.md
+// speakers-without-AEC fallback (see docs/history/MVP/milestones/m5_streaming_stt.md
 // "Half-duplex" section). The gate is templated on a Clock so we can
 // inject a virtual one and exercise hangover timing without sleeping.
 

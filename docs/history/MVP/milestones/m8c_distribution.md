@@ -1,7 +1,7 @@
 # M8C — Distribution & Wake-Word
 
 **Status: ✅ closed 2026-05-08.** All four steps shipped — wake-word
-(off-by-default per `plans/open_questions.md` §L8), packaging
+(off-by-default per `docs/history/MVP/open_questions.md` §L8), packaging
 (Compose + systemd, both healthy on dev), documentation pass (README
 rewrite + new architecture/configuration/operations docs), and the
 acceptance gates revised down to dev-workstation-only (#1 and #4
@@ -43,7 +43,7 @@ green. After a debug session diagnosing live-demo silence (built
 compare raw + AEC sources through STT and the wake-word engine in
 parallel), reviewed whether wake-word is the right primitive for
 acva's product line and concluded it is not — see
-`plans/open_questions.md` §L8 for the full five-point analysis.
+`docs/history/MVP/open_questions.md` §L8 for the full five-point analysis.
 
 The summary: in this codebase Speaches stays pinned in VRAM (L7
 `WHISPER__TTL=-1`), so wake-word doesn't save model VRAM; Whisper
@@ -119,7 +119,7 @@ Acceptance against the plan's gate:
   measurement deferred until the real inference lands — the
   placeholder is an O(1) early return that adds ~ns. Real
   openWakeWord inference target is < 2 ms/frame per
-  `plans/milestones/m8c_distribution.md` Risks table.
+  `docs/history/MVP/milestones/m8c_distribution.md` Risks table.
 
 Personality overlay landed alongside the framework
 (`PersonalityWakeWordOverride` — `model_paths` REPLACES on
@@ -531,7 +531,7 @@ What stays as future work — not gated to any milestone:
 
 ## Acceptance
 
-1. *(dropped 2026-05-08 — superseded by §L8 in `plans/open_questions.md`. Wake-word ships off-by-default; the original "default-on, ignores background speech" gate is no longer the M8C target. The framework + opt-in path are tested green; the conversational gate moves to M10 address detection.)*
+1. *(dropped 2026-05-08 — superseded by §L8 in `docs/history/MVP/open_questions.md`. Wake-word ships off-by-default; the original "default-on, ignores background speech" gate is no longer the M8C target. The framework + opt-in path are tested green; the conversational gate moves to M10 address detection.)*
 2. **Both deployment paths work end-to-end on the dev workstation:**
    - Docker Compose: `./scripts/dev-up.sh` brings up backends; `./_build/release/acva` connects on the host. ✅
    - systemd: `./scripts/install-systemd.sh && systemctl --user start acva.target`; unit files pass `systemd-analyze verify` + round-trip cleanly through install/uninstall on the dev box. Bare-metal install on a fresh-VM Manjaro / Ubuntu 24.04 is **dropped** as MVP scope — operators on those distros use the Compose path.

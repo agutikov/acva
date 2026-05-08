@@ -21,7 +21,7 @@ Drive a real LLM end-to-end against a console transcript: text in → tokens str
 
 For dev (M1 onward), the **model backends run as Docker Compose containers on the host network**; **`acva` runs on the host as a CLI** so debugging / step-through / log inspection is direct. The systemd unit files in `packaging/systemd/` remain valid for production-style deployment but are no longer the default path.
 
-This decision is captured in `plans/open_questions.md` as a follow-up to H4/H5; the design doc's §4.12 (Supervisor) and §16 (tech stack) are revised accordingly.
+This decision is captured in `docs/history/MVP/open_questions.md` as a follow-up to H4/H5; the design doc's §4.12 (Supervisor) and §16 (tech stack) are revised accordingly.
 
 ---
 

@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------
+// MVP-ERA SNAPSHOT (last refreshed pre-M4B Speaches consolidation).
+// Reflects the original plan as it stood through M0–M2; later
+// milestones (M4B, M8A/B/C) reshaped the compose stack, demos,
+// and observability surface. Treat as historical reference.
+// For current layout see ../../README.md and ../architecture.md.
+// ---------------------------------------------------------------
 // 05_infra.dot — deployment / infrastructure view. Splits into five
 // concerns called out in the prompt:
 //   • config       — files + env that parameterise the system

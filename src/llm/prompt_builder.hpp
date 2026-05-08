@@ -20,7 +20,7 @@ struct PromptInputs {
 };
 
 // Assembles the OpenAI-compatible chat-completions request body from the
-// memory layer + dialogue config (plans/project_design.md §9.3).
+// memory layer + dialogue config (docs/project_design.md §9.3).
 //
 //   [system policy]            ← cfg.dialogue.system_prompts[lang]
 //   [durable facts]            ← facts where confidence ≥ threshold

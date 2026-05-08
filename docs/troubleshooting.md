@@ -71,7 +71,7 @@ Three steps, smallest scope first:
    M4B follow-up. Streaming TTS arrives in libcurl bursts and the
    audio thread drains chunks faster than bursts arrive; will be
    fixed by a pre-buffer threshold in `PlaybackEngine` before M5
-   ships. See `plans/milestones/m4b_speaches_consolidation.md`.
+   ships. See `docs/history/MVP/milestones/m4b_speaches_consolidation.md`.
 
 ### "No LLM reply"
 
@@ -192,7 +192,7 @@ Diagnostic: capture the speaker→air→mic chain at every stage.
 ```
 
 The verdict line maps the per-band numbers to one of three causes
-(see `docs/aec_report.md` § 6 + `plans/milestones/m6b_aec_hardware.md`):
+(see `docs/aec_report.md` § 6 + `docs/history/MVP/milestones/m6b_aec_hardware.md`):
 
 - **gate 4 PASS via system AEC** — the recommended state.
   `original→raw` shows -25 dB or more attenuation across the speech
@@ -384,9 +384,9 @@ Open an issue (or attach to your branch) when:
 
 ## See also
 
-- [`plans/milestones/README.md`](../plans/milestones/README.md) — what
+- [`docs/history/MVP/milestones/README.md`](../docs/history/MVP/milestones/README.md) — what
   each milestone unlocks for the user, with concrete commands per
   milestone.
-- [`plans/project_design.md`](../plans/project_design.md) §17 — the
+- [`docs/project_design.md`](../docs/project_design.md) §17 — the
   authoritative milestone roadmap.
 - [`CLAUDE.md`](../CLAUDE.md) — repository layout + working notes.

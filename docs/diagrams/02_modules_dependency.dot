@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------
+// MVP-ERA SNAPSHOT (last refreshed pre-M4B Speaches consolidation).
+// Reflects the original plan as it stood through M0–M2; later
+// milestones (M4B, M8A/B/C) reshaped the compose stack, demos,
+// and observability surface. Treat as historical reference.
+// For current layout see ../../README.md and ../architecture.md.
+// ---------------------------------------------------------------
 // 02_modules_dependency.dot — internal modules + external library
 // dependency graph for the acva orchestrator (acva_core static lib + main).
 //

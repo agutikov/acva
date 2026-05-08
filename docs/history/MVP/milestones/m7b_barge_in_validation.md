@@ -492,7 +492,7 @@ demo is the *full* path including detector + AEC gate + persistence.
 
 ## Cleanup at close
 
-- Promote M7's "code-complete" to "✅ closed" in `plans/milestones/README.md`
+- Promote M7's "code-complete" to "✅ closed" in `docs/history/MVP/milestones/README.md`
   and CLAUDE.md once Step 7's spot check passes.
 - Delete `scripts/m7-bargein-bench.py` if Step 4's in-process loop
   fully subsumes it (it does — same percentiles, no shell parsing).

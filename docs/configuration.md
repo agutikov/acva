@@ -241,7 +241,7 @@ runs at startup):
   canonical reference.
 - `src/config/config.hpp` — C++ structs, default values.
 - `src/config/reload.cpp` — the hand-written hot/restart catalog.
-- `plans/open_questions.md` §L8 — why wake-word ships `enabled: false`
+- `docs/history/MVP/open_questions.md` §L8 — why wake-word ships `enabled: false`
   by default.
-- `plans/open_questions.md` §L7 — why `apm.aec_enabled: false` and
+- `docs/history/MVP/open_questions.md` §L7 — why `apm.aec_enabled: false` and
   `apm.use_system_aec: true` are the defaults on this hardware class.
