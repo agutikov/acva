@@ -3,7 +3,7 @@
 > **Archive (MVP).** This directory captures the per-milestone
 > plans as they stood at MVP close (M8C, 2026-05-08). The live
 > source-of-truth for architecture is `docs/project_design.md`;
-> post-MVP planning lives in `plans/postpone/`. Cross-links below
+> post-MVP planning lives in `plans/`. Cross-links below
 > point at those live locations.
 
 Detailed per-milestone plans. The high-level table lives in
@@ -11,7 +11,7 @@ Detailed per-milestone plans. The high-level table lives in
 directory has one file per milestone with concrete steps, file
 lists, APIs, tests, and acceptance criteria. Plans for milestones
 not yet started — and for stretch work parked post-MVP — live in
-[`plans/postpone/`](../../../../plans/postpone/).
+[`plans/`](../../../../plans/).
 
 ## Status
 
@@ -34,9 +34,9 @@ planned post-MVP; M8C packaging stretch is parked.
 | M8A | `m8a_admin_state.md`           | ✅ closed 2026-05-07 (hot-reload, privacy, memory CLI, watchdog+restart, model orchestration) |
 | M8B | `m8b_observability.md`         | ✅ closed 2026-05-07 (soak harness, Grafana dashboard, OTLP, build-time pass) |
 | M8C | `m8c_distribution.md`          | ✅ closed 2026-05-08 (wake-word off-by-default, Compose+systemd packaging, docs pass) |
-| M9  | [`../../../../plans/postpone/m9_speculation.md`](../../../../plans/postpone/m9_speculation.md) | planned (originally M5 Steps 4–5; depends on a partial-transcript source — Speaches doesn't emit them yet) |
-| M10 | [`../../../../plans/postpone/m10_conversational_ux.md`](../../../../plans/postpone/m10_conversational_ux.md) | planned (adaptive endpointer + address detection; depends on M9; wake-word's gate seam is the runway) |
-| —   | [`../../../../plans/postpone/m8c_packaging_stretch.md`](../../../../plans/postpone/m8c_packaging_stretch.md) | parked (image digest pinning, AUR `PKGBUILD`, `.deb`, observability project-label cleanup, man page, fresh-VM acceptance) |
+| M9  | [`../../../../plans/m9_conversational_quality/p9.2_speculative_llm_start/`](../../../../plans/m9_conversational_quality/p9.2_speculative_llm_start/) | planned (originally M5 Steps 4–5; depends on a partial-transcript source — Speaches doesn't emit them yet) |
+| M10 | [`../../../../plans/m9_conversational_quality/p9.3_adaptive_endpointer_address_detection/`](../../../../plans/m9_conversational_quality/p9.3_adaptive_endpointer_address_detection/) | planned (adaptive endpointer + address detection; depends on M9; wake-word's gate seam is the runway) |
+| —   | [`../../../../plans/m13_distribution_hardening/p13.0_m8c_packaging_stretch/`](../../../../plans/m13_distribution_hardening/p13.0_m8c_packaging_stretch/) | parked (image digest pinning, AUR `PKGBUILD`, `.deb`, observability project-label cleanup, man page, fresh-VM acceptance) |
 
 ## Demos — `acva demo <name>`
 
@@ -182,13 +182,13 @@ all model assets via the `models:` registry block. systemd path:
 
 Source `PartialTranscript` from a streaming STT backend; speculative
 LLM start in the Dialogue Manager with stability-window reconcile.
-Plan: [`../../../../plans/postpone/m9_speculation.md`](../../../../plans/postpone/m9_speculation.md).
+Plan: [`../../../../plans/m9_conversational_quality/p9.2_speculative_llm_start/`](../../../../plans/m9_conversational_quality/p9.2_speculative_llm_start/).
 
 ### M10 (planned) — conversational UX
 
 Adaptive endpointer (depends on M9 partials) + address-detection
 classifier above the wake-word gate seam. Plan:
-[`../../../../plans/postpone/m10_conversational_ux.md`](../../../../plans/postpone/m10_conversational_ux.md).
+[`../../../../plans/m9_conversational_quality/p9.3_adaptive_endpointer_address_detection/`](../../../../plans/m9_conversational_quality/p9.3_adaptive_endpointer_address_detection/).
 
 ## Conventions used in these documents
 

@@ -13,7 +13,7 @@
 > conversational gate moves to M10 address detection). For the
 > contributor-oriented condensation, see
 > [`docs/architecture.md`](architecture.md). For the post-MVP
-> roadmap, see [`plans/postpone/`](../plans/postpone/).
+> roadmap, see [`plans/`](../plans/) (M9–M15 milestones).
 
 Synthesis of:
 - `local_voice_ai_orchestrator_mvp_cpp_architecture_2026.md` (original design)

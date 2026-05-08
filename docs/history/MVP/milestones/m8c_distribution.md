@@ -8,7 +8,7 @@ acceptance gates revised down to dev-workstation-only (#1 and #4
 dropped, see `## Acceptance` below). Stretch packaging items
 (image digest pinning, AUR `PKGBUILD`, `.deb`, observability
 project-label cleanup, man page, fresh-VM bare-metal acceptance)
-moved to `plans/postpone/m8c_packaging_stretch.md` so they don't fall
+moved to `plans/m13_distribution_hardening/p13.0_m8c_packaging_stretch/` so they don't fall
 off the radar without blocking M8C closure.
 
 **Estimate:** ~1 week. *(Actual: ~3 weeks across M8A→M8B→M8C interleaved.)*
@@ -446,7 +446,7 @@ Acceptance against the plan's gate:
   documented as the remaining acceptance work; the unit files
   themselves are correct for the M4B stack.
 
-**Stretch items moved to `plans/postpone/m8c_packaging_stretch.md`**
+**Stretch items moved to `plans/m13_distribution_hardening/p13.0_m8c_packaging_stretch/`**
 — image digest pinning, AUR `PKGBUILD`, `.deb` build script,
 observability project-label cleanup, `packaging/man/acva.1` man
 page, and fresh-VM bare-metal acceptance. None block MVP; the
