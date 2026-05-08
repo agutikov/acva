@@ -5,7 +5,7 @@ Path B (PipeWire `module-echo-cancel`):
 
 - Gate 1 — VAD false-starts during continuous TTS: 0.200/min vs 1.0/min threshold (`scripts/soak-vad-falsestarts.sh --quick`).
 - Gate 3 — barge-in audibility: 5/5 clean Russian transcripts (`scripts/barge-in-probe.py`).
-- Gate 4 — speech-band cancellation: 25–46 dB (see `docs/aec_report.md` § 10).
+- Gate 4 — speech-band cancellation: 25–46 dB (see `docs/reports/aec_report.md` § 10).
 
 Step 2 (Path A diagnosis: lower-amp + USB mic) is **moot** — Path B
 works on the dev workstation's existing hardware. Two follow-on
@@ -70,7 +70,7 @@ verification baseline.
 
 ## Step 0 — Pin the failure mode (✅ done in M6 § 5.2)
 
-Captured in `docs/aec_report.md` § 5.2. The hardware demo
+Captured in `docs/reports/aec_report.md` § 5.2. The hardware demo
 (`acva demo aec-hw`) confirms:
 
 - Loopback ring fills at correct rate (48 000 frames/s).
@@ -80,7 +80,7 @@ Captured in `docs/aec_report.md` § 5.2. The hardware demo
 
 So APM is fed correlated reference + mic at the right time base, finds
 the delay, and still fails to cancel. Three contributing causes
-ranked in `docs/aec_report.md` § 6: speaker non-linearity (likely),
+ranked in `docs/reports/aec_report.md` § 6: speaker non-linearity (likely),
 codec DSP residual processing (likely), WebRTC API quirk
 (low-likelihood). Step 1 captures ground-truth signals so analysis
 isn't a guessing game; Step 2 runs the configuration probes
@@ -246,7 +246,7 @@ verdict: codec DSP suppresses the reference signal so much that
 
 The verdict line is rule-based: a few simple thresholds on the
 per-band numbers map to the three hypotheses in
-`docs/aec_report.md` § 6.
+`docs/reports/aec_report.md` § 6.
 
 ### 1.3 Acceptance for Step 1
 
@@ -277,9 +277,9 @@ per-band numbers map to the three hypotheses in
   cross-correlation peak; per-band attenuation original→raw and ERLE
   raw→aec across {100-300, 300-1000, 1000-3000, 3000-8000} Hz; emits
   a verdict line that maps the per-band numbers to the three
-  hypotheses in `docs/aec_report.md` § 6.
+  hypotheses in `docs/reports/aec_report.md` § 6.
 - Pending: actually running it on the dev workstation and pasting the
-  per-band numbers back into `docs/aec_report.md`. That's the user's
+  per-band numbers back into `docs/reports/aec_report.md`. That's the user's
   call (touches the speakers + mic).
 
 ### 1.4 Why this is the right shape
@@ -356,7 +356,7 @@ plug-and-play.
 After 2.1 + 2.2 (informed by Step 1's recordings):
 
 - If 2.1 alone gets ERLE > 25 dB → ship Path A with a max-volume
-  note in `docs/troubleshooting.md`. Skip Step 3.
+  note in `docs/guide/troubleshooting.md`. Skip Step 3.
 - If 2.2 gets ERLE > 25 dB but 2.1 doesn't → Path A works on
   external hardware but not on the integrated codec. Ship Path A as
   the default; document USB-mic recommendation for users hitting
@@ -369,7 +369,7 @@ After 2.1 + 2.2 (informed by Step 1's recordings):
 **Status (2026-05-03):** ✅ landed.  3.1 manual smoke + 3.2 permanent
 wiring both done in one session.  Measured 25-46 dB speech-band
 cancellation on the dev workstation, well past the gate-4 25 dB
-target — see `docs/aec_report.md` § 10.3.
+target — see `docs/reports/aec_report.md` § 10.3.
 
 PipeWire ships `module-echo-cancel`, which loads
 `webrtc-audio-processing` system-side and presents a cleaned source.
@@ -418,7 +418,7 @@ When `use_system_aec: true`, set `aec_enabled` / `ns_enabled` /
 NS over-suppresses, two AGCs fight, AEC convergence on a pre-cleaned
 signal produces ~800 ms of zeroed output at the start of every
 utterance ("the first words are missing").  This was directly
-observed during M6B exploration; see `docs/aec_report.md` § 10.5.
+observed during M6B exploration; see `docs/reports/aec_report.md` § 10.5.
 
 Files (all landed):
 - `src/orchestrator/system_aec.{hpp,cpp}` — RAII helper.
@@ -463,7 +463,7 @@ Speech-band cancellation 25-29 dB beyond the natural transfer
 function (vs the 14-13 dB baseline measured on the default capture
 path).  Past the 25 dB acceptance threshold across the entire
 spectrum.  Full numbers + waveform/spectrogram analysis in
-`docs/aec_report.md` § 10.
+`docs/reports/aec_report.md` § 10.
 
 ### 4.2 Gate 1 — TTS doesn't trigger VAD (✅ PASS 2026-05-04)
 
@@ -525,10 +525,10 @@ Based on Path B passing:
   false` shipped as default; `half_duplex_while_speaking: false`
   (system AEC obviates the gate).  Block comment spells out why
   the four knobs are not orthogonal.
-- `docs/aec_report.md` — § 10 appended with M6B Step 1 + Step 3
+- `docs/reports/aec_report.md` — § 10 appended with M6B Step 1 + Step 3
   results, gate-4 PASS numbers, the both-stacks-on lesson, and
   current gate state table.
-- `docs/troubleshooting.md` — "Assistant transcribes its own voice
+- `docs/guide/troubleshooting.md` — "Assistant transcribes its own voice
   / phantom STT loops" symptom section added, points at
   `acva demo aec-record` + `scripts/aec_analyze.py` and maps
   per-band verdicts to actions.

@@ -192,7 +192,7 @@ Diagnostic: capture the speaker→air→mic chain at every stage.
 ```
 
 The verdict line maps the per-band numbers to one of three causes
-(see `docs/aec_report.md` § 6 + `docs/history/MVP/milestones/m6b_aec_hardware.md`):
+(see `docs/reports/aec_report.md` § 6 + `docs/history/MVP/milestones/m6b_aec_hardware.md`):
 
 - **gate 4 PASS via system AEC** — the recommended state.
   `original→raw` shows -25 dB or more attenuation across the speech
@@ -384,9 +384,9 @@ Open an issue (or attach to your branch) when:
 
 ## See also
 
-- [`docs/history/MVP/milestones/README.md`](../docs/history/MVP/milestones/README.md) — what
+- [`docs/history/MVP/milestones/README.md`](../history/MVP/milestones/README.md) — what
   each milestone unlocks for the user, with concrete commands per
   milestone.
-- [`docs/project_design.md`](../docs/project_design.md) §17 — the
+- [`docs/project_design.md`](../project_design.md) §17 — the
   authoritative milestone roadmap.
 - [`CLAUDE.md`](../CLAUDE.md) — repository layout + working notes.

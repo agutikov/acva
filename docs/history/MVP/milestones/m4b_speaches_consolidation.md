@@ -308,7 +308,7 @@ one HTTP-client style in tree (OpenAI-compatible).
   unchanged from the user's perspective.
 - `src/demos/chat.cpp` — unchanged in spirit; verify post-Step-4.
 - `src/demos/fsm.cpp` — unchanged; the fake driver still works.
-- `docs/troubleshooting.md` — replace "piper container down"
+- `docs/guide/troubleshooting.md` — replace "piper container down"
   troubleshooting with "speaches container down". One container to
   blame instead of two.
 - New demo: `acva demo stt`. Drives `OpenAiSttClient` against a

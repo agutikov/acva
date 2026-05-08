@@ -21,7 +21,7 @@ backend supervision strategy differs.
 | `acva-speaches.service` | STT + TTS backend (Speaches, M4B) | listens on `127.0.0.1:8090`. Replaces the pre-M4B `acva-whisper.service` + `acva-piper.service` pair. |
 | `acva.service`          | Orchestrator                   | listens on `127.0.0.1:9876` (control plane). Depends on the two backends. |
 | `acva.target`           | Convenience target             | brings up all three units in dependency order. |
-| `nvidia-cdi-refresh.service` | NVIDIA CDI spec regenerator | **System-level**, not per-user. Regenerates `/etc/cdi/nvidia.yaml` on every boot before `docker.service` so Docker's CDI runtime picks up the kernel's current `nvidia-uvm` device majors. Without this, `cuInit` returns 999 inside containers after some reboots and llama / Speaches silently fall back to CPU. See `docs/troubleshooting.md` § "All NNs run on CPU after reboot". Useful in the systemd path too if you also run the observability compose stack against the GPU. |
+| `nvidia-cdi-refresh.service` | NVIDIA CDI spec regenerator | **System-level**, not per-user. Regenerates `/etc/cdi/nvidia.yaml` on every boot before `docker.service` so Docker's CDI runtime picks up the kernel's current `nvidia-uvm` device majors. Without this, `cuInit` returns 999 inside containers after some reboots and llama / Speaches silently fall back to CPU. See `docs/guide/troubleshooting.md` § "All NNs run on CPU after reboot". Useful in the systemd path too if you also run the observability compose stack against the GPU. |
 
 The pre-M4B `acva-whisper.service` + `acva-piper.service` pair was
 removed in M8C Step 2 — Speaches consolidates STT + TTS behind one

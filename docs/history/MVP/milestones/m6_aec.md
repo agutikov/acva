@@ -18,7 +18,7 @@
 >   measure 36-46 dB speech-band cancellation (raw vs original) when
 >   `cfg.apm.use_system_aec: true` (PipeWire's `module-echo-cancel`
 >   running upstream of acva). Past the 25 dB target across the entire
->   spectrum. See `docs/aec_report.md` § 10.3.
+>   spectrum. See `docs/reports/aec_report.md` § 10.3.
 > - **Gate 1 — PASS.** `scripts/soak-vad-falsestarts.sh --quick` on
 >   Russian prompts: 0.200 false_starts/min over 5 min vs 1.0/min
 >   threshold (5× margin). 2026-05-04.
@@ -33,7 +33,7 @@
 > B (system AEC via PipeWire) sidesteps both, and M6B Step 3.2 wired
 > it as the recommended Linux desktop default — see
 > `docs/history/MVP/milestones/m6b_aec_hardware.md` § 3.2.  Full analysis in
-> `docs/aec_report.md`.
+> `docs/reports/aec_report.md`.
 
 ## Goal
 

@@ -93,7 +93,7 @@ match.
 ### 5. `packaging/man/acva.1` man page
 
 Listed in the original M8C Step 2 spec; deferred because `acva
---help` is complete and `docs/operations.md` covers the same ground.
+--help` is complete and `docs/guide/operations.md` covers the same ground.
 A man page is the right interface for `man acva` and for distro
 packaging (Lintian / Arch packaging guidelines flag binaries
 without one).

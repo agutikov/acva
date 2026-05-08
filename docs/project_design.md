@@ -860,7 +860,7 @@ Each milestone has a detailed plan in `docs/history/MVP/milestones/`. The summar
 ### M8C: Distribution & Wake-Word — ✅ closed 2026-05-08 — see [milestones/m8c_distribution.md](milestones/m8c_distribution.md)
 - Wake-word via openWakeWord 3-stage ONNX — framework, demo, trainer all shipped; `enabled: false` default per [open_questions.md §L8](open_questions.md) (right primitive for sleep-and-wake, wrong for the conversational product mode this codebase targets; M10 address detection is the conversational gate).
 - Compose + systemd packaging finalized — `llama` + `speaches` (M4B consolidated), 4-unit user-systemd layout, `tools/acva-models` registry-driven installer, NVIDIA CDI refresh helper.
-- Docs pass — README rewrite + new `docs/architecture.md`, `docs/configuration.md`, `docs/operations.md`. `docs/troubleshooting.md` (pre-existing) covers symptom→fix.
+- Docs pass — README rewrite + new `docs/architecture.md`, `docs/guide/configuration.md`, `docs/guide/operations.md`. `docs/guide/troubleshooting.md` (pre-existing) covers symptom→fix.
 - Stretch packaging (image digest pinning, AUR `PKGBUILD`, `.deb`, observability project-label cleanup, man page, fresh-VM bare-metal acceptance) parked at [postpone/m8c_packaging_stretch.md](postpone/m8c_packaging_stretch.md) — none MVP-blocking.
 - Final-sweep (clang-tidy / sanitizer matrix / public-function comment audit) dropped from MVP scope; ASan + UBSan stay available via `./build.sh debug`.
 

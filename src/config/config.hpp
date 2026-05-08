@@ -458,7 +458,7 @@ struct ApmConfig {
     // PULSE_SINK / PULSE_SOURCE env vars). Recommended on Linux desktops
     // where PipeWire is the audio server and the in-process WebRTC APM
     // doesn't cancel well on the integrated codec — see
-    // docs/aec_report.md § 6 + docs/history/MVP/milestones/m6b_aec_hardware.md
+    // docs/reports/aec_report.md § 6 + docs/history/MVP/milestones/m6b_aec_hardware.md
     // Step 3. When this is on, set `aec_enabled: false` so the
     // in-process AEC doesn't try to subtract the echo a second time
     // (it has nothing to cancel and the convergence transient produces

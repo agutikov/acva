@@ -1,7 +1,7 @@
 # acva — Operations
 
 Day-2 ops guide: how to deploy, watch, change, and clean up. For
-**failure** triage (symptom → fix), see `docs/troubleshooting.md` —
+**failure** triage (symptom → fix), see `docs/guide/troubleshooting.md` —
 this doc covers the intentional operations.
 
 ## Lifecycle
@@ -310,7 +310,7 @@ non-zero on drift.
 
 ## When something is wrong
 
-`docs/troubleshooting.md` is the symptom-first index. Quick triage:
+`docs/guide/troubleshooting.md` is the symptom-first index. Quick triage:
 
 ```sh
 ./_build/dev/acva demo health     # backends

@@ -74,10 +74,10 @@ Each demo exits `0` on success and non-zero with a clear failure line
 on stderr. They use the same config-resolution path as `acva` itself —
 pass `--config PATH` to override.
 
-When something doesn't work, [`docs/troubleshooting.md`](../../../troubleshooting.md)
+When something doesn't work, [`docs/guide/troubleshooting.md`](../../../guide/troubleshooting.md)
 is the symptom-first guide. Operational tasks (start/stop, model
 swap, privacy commands, backup) are in
-[`docs/operations.md`](../../../operations.md).
+[`docs/guide/operations.md`](../../../guide/operations.md).
 
 ## What you can try after each milestone
 
@@ -87,7 +87,7 @@ All commands assume the project root as cwd, a successful
 (`./scripts/dev-up.sh`).
 
 Most surfaces are now exercised by the `acva demo …` commands above
-or documented in `docs/operations.md`; this section keeps the
+or documented in `docs/guide/operations.md`; this section keeps the
 historical "headline feature per milestone" view for orientation.
 
 ### M0 ✅ — skeleton runs end-to-end on synthetic events

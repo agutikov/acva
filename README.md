@@ -43,9 +43,9 @@ Mic → Resample → APM (AEC/NS/AGC) → VAD → Endpointer → Utterance Buffe
 - **Model backends run as separate processes**, never forked from the orchestrator: `llama.cpp/llama-server` for LLM, [Speaches](https://github.com/speaches-ai/speaches) for STT + TTS (one OpenAI-API-compatible surface that consolidates faster-whisper + Piper). Default deployment is **Docker Compose**; systemd units are an alternative production path.
 - **Realtime audio path is isolated**: lock-free SPSC ring between the audio callback and the processing thread; no blocking, no allocation, no I/O on the audio thread.
 - **Cancellation is structural**: every long-running operation carries a turn ID; barge-in invalidates the turn ID and stale work is rejected at every queue boundary.
-- **AEC is system-level by default**: PipeWire `module-echo-cancel` upstream of acva delivers 25–46 dB of speech-band cancellation on the dev workstation. The in-process WebRTC APM stays compiled but disabled; see `docs/aec_report.md` for the full M6 + M6B analysis.
+- **AEC is system-level by default**: PipeWire `module-echo-cancel` upstream of acva delivers 25–46 dB of speech-band cancellation on the dev workstation. The in-process WebRTC APM stays compiled but disabled; see `docs/reports/aec_report.md` for the full M6 + M6B analysis.
 
-See `docs/project_design.md` for the complete architecture and `docs/observability.svg` for the runtime topology.
+See `docs/project_design.md` for the complete architecture and `docs/diagrams/observability.svg` for the runtime topology.
 
 ## Tech Stack
 
@@ -307,7 +307,7 @@ For longer runs:
 
 ## Troubleshooting
 
-`docs/troubleshooting.md` is the symptom-first guide — routes failures to the right `acva demo <name>` and reads its output. Common entry points:
+`docs/guide/troubleshooting.md` is the symptom-first guide — routes failures to the right `acva demo <name>` and reads its output. Common entry points:
 
 | Symptom | Start with |
 |---|---|
@@ -324,9 +324,9 @@ For longer runs:
 - **`docs/project_design.md`** — architecture source of truth (sections referenced throughout the codebase comments).
 - **`docs/history/MVP/open_questions.md`** — resolved + open decisions; §L holds implementation-driven revisions.
 - **`docs/history/MVP/milestones/m{0..8}_*.md`** — per-milestone implementation history.
-- **`docs/aec_report.md`** — M6 + M6B AEC analysis.
-- **`docs/troubleshooting.md`** — symptom-first guide.
-- **`docs/observability.{svg,pdf}`** — runtime topology diagram.
+- **`docs/reports/aec_report.md`** — M6 + M6B AEC analysis.
+- **`docs/guide/troubleshooting.md`** — symptom-first guide.
+- **`docs/diagrams/observability.{svg,pdf}`** — runtime topology diagram.
 - **`CLAUDE.md`** — guidance for Claude Code working in this repo (also useful as a deeper reading-list for humans).
 
 ## License

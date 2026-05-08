@@ -428,7 +428,7 @@ physical setup. Reuses M6B infrastructure:
    wider gaps indicate the synthetic acoustic model needs
    recalibration (bump assistant `gain_db` in manifest).
 
-Documented in `docs/troubleshooting.md` § "Barge-in latency feels
+Documented in `docs/guide/troubleshooting.md` § "Barge-in latency feels
 slow" as the first diagnostic to run, not as a recurring chore.
 
 ---
@@ -498,6 +498,6 @@ demo is the *full* path including detector + AEC gate + persistence.
   fully subsumes it (it does — same percentiles, no shell parsing).
   Keep it if it's still the cheapest "is the cascade alive at all"
   smoke; Step 4's harness needs the WavCapture path built.
-- Update `docs/troubleshooting.md` § "Barge-in fires when it
+- Update `docs/guide/troubleshooting.md` § "Barge-in fires when it
   shouldn't" to reference `scripts/validate-bargein.sh` as the
   diagnostic, replacing today's pointer to `acva demo bargein`.

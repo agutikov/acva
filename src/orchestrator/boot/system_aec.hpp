@@ -29,7 +29,7 @@ std::optional<EchoCancelModule>
 // `cfg.apm.use_system_aec` is true.
 //
 // Why this exists. The in-process WebRTC APM (M6) doesn't cancel
-// well on the dev workstation's laptop codec — see docs/aec_report.md
+// well on the dev workstation's laptop codec — see docs/reports/aec_report.md
 // § 6. PipeWire's `module-echo-cancel` uses the same
 // webrtc-audio-processing library but consumes the raw ALSA mic
 // stream BEFORE per-application codec DSP, and on this hardware

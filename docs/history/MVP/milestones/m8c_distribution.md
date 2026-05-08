@@ -492,15 +492,15 @@ Two deployment paths ship side-by-side; both have been informally validated sinc
   (`src/orchestrator/{stacks,boot,admin,observability,io}` +
   per-subsystem dirs), end-to-end happy path walkthrough, persistence
   model, observability surface, where-to-read-more.
-- `docs/configuration.md` (✅) — config-meta reference: file
+- `docs/guide/configuration.md` (✅) — config-meta reference: file
   precedence, top-level sections table, path resolution rules, model
   registry + alias resolution, personality overlay semantics, hot vs
   restart-required catalog (extracted from `src/config/reload.cpp`),
   worked examples. Defers to `config/default.yaml` inline comments
   as the canonical per-field reference rather than re-documenting
   every field (would rot).
-- `docs/operations.md` (✅) — day-2 ops, complementary to
-  `docs/troubleshooting.md`. Lifecycle, control-plane endpoints,
+- `docs/guide/operations.md` (✅) — day-2 ops, complementary to
+  `docs/guide/troubleshooting.md`. Lifecycle, control-plane endpoints,
   observability stack, log handling, model + personality switching,
   privacy commands, memory CLI subcommands, restart strategies,
   backups + DB hygiene, soak, updating. Symptom-first triage links
@@ -508,7 +508,7 @@ Two deployment paths ship side-by-side; both have been informally validated sinc
 
 The `packaging/man/acva.1` man page is the remaining stretch item;
 deferred from Step 2 closure since `acva --help` is complete and the
-content overlaps `docs/operations.md`.
+content overlaps `docs/guide/operations.md`.
 
 ## Step 4 — Final sweep — *(dropped 2026-05-08 from MVP scope)*
 

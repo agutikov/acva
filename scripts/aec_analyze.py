@@ -21,7 +21,7 @@ Reads the three WAVs the demo writes and answers, in order:
      from "10 dB cancellation + 5 dB AGC gain")
   4. What is the dominant failure mode?  (verdict line mapped
      from the per-band table to the three hypotheses in
-     docs/aec_report.md S 6)
+     docs/reports/aec_report.md S 6)
 
 numpy is required.  scipy + matplotlib are optional; when
 matplotlib is available the script also writes per-stage
@@ -351,7 +351,7 @@ def verdict(orig_to_raw_db: list[float],
              raw_to_aec_out_db: list[float],
              inferred_gain_db: float) -> str:
     """Map per-band numbers to the three hypotheses in
-    docs/aec_report.md S 6.
+    docs/reports/aec_report.md S 6.
 
     Uses the level-matched table (`raw_to_aec_lm_db`) as the primary
     AEC signal — it strips AGC and reflects what the cancellation

@@ -680,7 +680,7 @@ adaptive filter, given a strong reference but a near-zero mic
 correlation (PipeWire already cancelled), drives output to zero
 during convergence. Fix: when `use_system_aec=true`, set
 `aec_enabled=false`. Documented in `config/default.yaml`'s apm
-block + `docs/troubleshooting.md` "phantom STT loops" section.
+block + `docs/guide/troubleshooting.md` "phantom STT loops" section.
 
 ### 10.6 M6 acceptance gates — final state (2026-05-04)
 

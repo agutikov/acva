@@ -80,7 +80,7 @@ bool BargeInDetector::aec_ok() {
     // "always converged" — without this, the detector permanently
     // suppresses every SpeechStarted in the recommended default config
     // and barge-in literally never fires in production. M6B gate 4
-    // (25-46 dB measured ERLE, see docs/aec_report.md § 6) is the
+    // (25-46 dB measured ERLE, see docs/reports/aec_report.md § 6) is the
     // standing convergence budget.
     if (system_aec_active_) return true;
     if (!aec_active(apm_)) {

@@ -1,5 +1,5 @@
 // acva — observability + control-plane topology
-// M8B Step 2 — render with: dot -Tsvg docs/observability.dot -o docs/observability.svg
+// M8B Step 2 — render with: dot -Tsvg docs/diagrams/observability.dot -o docs/diagrams/observability.svg
 //
 // Three surfaces matter for operators:
 //   1. Metrics: Prometheus scrapes acva /metrics and (optionally)

@@ -361,7 +361,7 @@ block on `busy_timeout=5000`.
 - **Grafana dashboard:** `packaging/grafana/acva.json`, 7 panels.
   Bring up via `cd packaging/observability && docker compose -p
   acva-obs up -d`.
-- **Topology diagram:** `docs/observability.{dot,svg,pdf}` — 5
+- **Topology diagram:** `docs/diagrams/observability.{dot,svg,pdf}` — 5
   colored clusters showing the runtime + observability flows.
 
 ## Where to read more
@@ -372,8 +372,8 @@ block on `busy_timeout=5000`.
   Read this before assuming any A–K answer is still in force.
 - `docs/history/MVP/milestones/m{0..8}_*.md` — per-milestone implementation
   history.
-- `docs/aec_report.md` — the M6 + M6B AEC analysis (why system AEC
+- `docs/reports/aec_report.md` — the M6 + M6B AEC analysis (why system AEC
   beats in-process APM on this hardware class).
-- `docs/troubleshooting.md` — symptom-first debug guide.
+- `docs/guide/troubleshooting.md` — symptom-first debug guide.
 - `CLAUDE.md` — guidance for Claude Code working in this repo;
   also a useful tour for humans.

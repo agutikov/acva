@@ -452,7 +452,7 @@ utterance:
 #       agc_enabled: true
 #     This is the M6 in-process WebRTC AudioProcessing path.  ERLE on
 #     the dev workstation's integrated codec is poor — see
-#     docs/aec_report.md § 6 — but on cooperative hardware (USB mic
+#     docs/reports/aec_report.md § 6 — but on cooperative hardware (USB mic
 #     setups) it's the right path.  When the webrtc-audio-processing-1
 #     build dep is missing, the wrapper compiles to a no-op stub and
 #     these knobs have no effect.

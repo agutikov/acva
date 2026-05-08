@@ -207,7 +207,7 @@ SystemAec::SystemAec(const config::ApmConfig& apm) {
                 "cfg.apm.use_system_aec: false to disable system AEC "
                 "(note: the in-process APM path is known to be "
                 "ineffective on the dev workstation's laptop codec — "
-                "see docs/aec_report.md).";
+                "see docs/reports/aec_report.md).";
             log::error("system_aec", *startup_error_);
             return;
         }
