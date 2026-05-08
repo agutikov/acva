@@ -108,6 +108,48 @@ models:
       url:     https://github.com/snakers4/silero-vad/raw/v5.1.2/src/silero_vad/data/silero_vad.onnx
       purpose: "Silero VAD v5.1.2 ONNX (snakers4/silero-vad)"
 
+  # M8C Step 1 follow-up — openWakeWord stock models + shared
+  # infrastructure graphs. `tools/acva-models install <wake-alias>`
+  # downloads the chosen phrase plus the two `_shared_*` entries (the
+  # Mel-spectrogram preprocessor + the embedding model are required
+  # for any classifier head). URLs follow the openWakeWord v0.5.1
+  # release naming. sha256 fields left empty here pending a
+  # first-fetch verification pass; once filled, `acva-models verify`
+  # checks the file's integrity.
+  wake_word:
+    _shared_melspectrogram:
+      file:    melspectrogram.onnx
+      url:     https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/melspectrogram.onnx
+      purpose: "openWakeWord shared Mel-spectrogram preprocessor (required by every classifier)"
+    _shared_embedding:
+      file:    embedding_model.onnx
+      url:     https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/embedding_model.onnx
+      purpose: "openWakeWord shared embedding model (required by every classifier)"
+    hey-jarvis:
+      file:    hey_jarvis_v0.1.onnx
+      url:     https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/hey_jarvis_v0.1.onnx
+      purpose: "openWakeWord stock — 'hey jarvis'"
+    alexa:
+      file:    alexa_v0.1.onnx
+      url:     https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/alexa_v0.1.onnx
+      purpose: "openWakeWord stock — 'alexa'"
+    hey-mycroft:
+      file:    hey_mycroft_v0.1.onnx
+      url:     https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/hey_mycroft_v0.1.onnx
+      purpose: "openWakeWord stock — 'hey mycroft'"
+    hey-rhasspy:
+      file:    hey_rhasspy_v0.1.onnx
+      url:     https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/hey_rhasspy_v0.1.onnx
+      purpose: "openWakeWord stock — 'hey rhasspy'"
+    timer:
+      file:    timer_v0.1.onnx
+      url:     https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/timer_v0.1.onnx
+      purpose: "openWakeWord stock — 'timer' (and 'set a timer for ...')"
+    weather:
+      file:    weather_v0.1.onnx
+      url:     https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/weather_v0.1.onnx
+      purpose: "openWakeWord stock — 'weather' (and 'what's the weather')"
+
 logging:
   level: info        # trace | debug | info | warn | error | critical | off
   sink: dir          # stderr | journal | file | dir

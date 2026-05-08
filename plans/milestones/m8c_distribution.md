@@ -78,23 +78,157 @@ Acceptance against the plan's gate:
   openWakeWord inference target is < 2 ms/frame per
   `plans/milestones/m8c_distribution.md` Risks table.
 
-Deferred follow-up — **the actual openWakeWord ONNX integration**:
-- Three ONNX graphs in sequence: melspectrogram.onnx (16 kHz int16
-  → 32 mel bins) → embedding_model.onnx (mel → 96-dim embedding) →
-  per-word classifier (embedding → confidence). Each requires
-  matching input/output tensor shapes that depend on which
-  openWakeWord release the operator pulls.
-- `tools/acva-models` registry entry for the wake-word models +
-  download URLs. The openWakeWord HuggingFace mirror has stable
-  URLs.
-- `scripts/download-wake-word.sh` (or extend `tools/acva-models`).
-- A demo `acva demo wake-word` that records 5 s of mic, runs the
-  inference, and prints per-frame confidences — operator-side
-  threshold tuning aid.
+Personality overlay landed alongside the framework
+(`PersonalityWakeWordOverride` — `model_paths` REPLACES on
+non-empty, `threshold` optional-replaces; `enabled` and
+`followup_window_ms` stay global). 3 personality tests cover the
+full / threshold-only / no-override paths. `config/default.yaml`
+has the `audio.wake_word:` block (disabled by default with
+documented example) and threshold-only overrides on `consultant`
+(0.75 — stricter) and `geek_enthusiast` (0.55 — lighter) as
+operator-readable demos. `bootstrap.cpp` resolves each
+`model_paths` entry against `${XDG_DATA_HOME}/acva/`: bare
+filename → `models/wake_word/<file>`, path with subdirs → resolved
+verbatim, absolute path → kept as-is.
 
-The framework + gate are sufficient for the M8C MVP gate semantics
-(operator opts in, the pipeline reliably suppresses background
-speech). The actual phrase-recognition lives in the follow-up.
+### Step 1 follow-up — comprehensive wake-word tooling
+
+Tracked here so the work is bookmarked. Three tiers; each tier is a
+shippable deliverable on its own. Total effort top-to-bottom is
+~5–7 days; we can land tiers in order or skip ahead.
+
+**Tier 1 — foundations + observability — ✅ landed 2026-05-08**
+
+Shipped, all four subitems from the Tier 1 list:
+- **Registry catalog**: `WakeWordModelEntry` struct + `ModelsConfig.wake_word`
+  map; `config/default.yaml` carries 8 entries (2 `_shared_*` infra
+  graphs — Mel preprocessor + embedding model — plus stock phrases
+  hey-jarvis, alexa, hey-mycroft, hey-rhasspy, timer, weather). URLs
+  follow the openWakeWord v0.5.1 release pattern; sha256 fields left
+  empty pending first-fetch verification.
+- **Alias resolution** in `resolve_aliases` (config_load.cpp):
+  `cfg.audio.wake_word.model_paths` entries that match a registry
+  alias get expanded to `models/wake_word/<file>`; non-aliases
+  (paths, typos) are kept verbatim. Personality overlay runs first,
+  so `personalities.X.wake_word.model_paths: [hey-jarvis]` flows
+  through the same resolver. 3 dedicated tests in
+  `tests/test_personality.cpp` cover alias hit, alias miss
+  (verbatim), and personality-replaces-then-resolves.
+- **Observability**: new `voice_wake_word_detections_total` (cumulative
+  detection counter) and `voice_wake_word_last_score` (last seen
+  confidence) gauges on `/metrics`. WakeWord owns three atomic
+  counters (`detections_total_`, `last_score_`, `last_detection_ns_`);
+  `BargeInMetricsPoller` polls both BargeInDetector and WakeWord at
+  1 Hz (single thread; either pointer can be null). `/status` adds
+  a `wake_word` block with `loaded_models`, `threshold`,
+  `last_score`, `detections_total`, `last_detection_ms_ago`.
+- **Hot-reload for `audio.wake_word.threshold`**: added to
+  `config/reload.cpp`'s hot field catalog + `apply_hot_fields`.
+  `WakeWord` owns an `atomic<float> threshold_` with `threshold()`
+  getter + `update_threshold()` setter; the audio pipeline reads
+  the live value each frame. `ReloadSetup` registers a callback
+  that pushes the new threshold via the engine handle.
+  `wake_word.{enabled, model_paths, followup_window_ms}` stay
+  restart-required.
+- **`tools/acva-models` extension**: `list --type wake_word`,
+  `install <wake-alias>`, `install --type wake_word --all`, `sync`
+  picks up `cfg.audio.wake_word.model_paths`. `install <phrase>`
+  auto-pulls the two `_shared_*` graphs since openWakeWord
+  classifier heads are useless without the Mel preprocessor +
+  embedding model. Live-verified — `acva-models list --type
+  wake_word` correctly enumerates the 8 entries.
+
+End-to-end smoke verified with the live observability stack: `acva`
+boots → `/status` shows the wake-word block → `/metrics` exposes
+both new gauges. Personality overlay applies before metrics are
+read: with `active_personality: geek_enthusiast`,
+`/status.wake_word.threshold` = 0.55 (the personality's override),
+not the top-level 0.6.
+
+Full unit suite: **376 cases** (was 370), all green. The two
+deferred tiers (real ONNX inference + `acva demo wake-word` /
+`tools/train-wake-word`) remain as documented below.
+
+**Tier 1 (original spec, kept for reference) — foundations + observability (~1 day total)**
+
+1. **Registry catalog in `models:` block.** Add
+   `models.wake_word: { hey-jarvis: {file, url, sha256, size,
+   purpose}, ... }` to `config/default.yaml` with the openWakeWord
+   stock entries (`hey_jarvis_v0.1.onnx`, `alexa_v0.1.onnx`,
+   `ok_google_v0.1.onnx`, `hey_mycroft_v0.1.onnx`,
+   `hey_rhasspy_v0.1.onnx`). Mirrors the existing TTS/STT/VAD
+   pattern. New `WakeWordModelEntry` struct + `ModelsConfig.wake_word`
+   map. Extend `tools/acva-models` (Python) with `list wake_word`,
+   `install <alias>`, `sync wake_word`, `verify wake_word`.
+2. **Alias resolution.** `cfg.audio.wake_word.model_paths: [hey-jarvis]`
+   → expanded to the registry filename in `config_load.cpp`'s
+   `resolve_aliases`, mirroring TTS/STT alias handling. Personality
+   overrides go through the same resolver.
+3. **`/metrics` + `/status` integration.**
+   `voice_wake_word_detections_total` (counter, labelled by model
+   alias) and `voice_wake_word_last_score` (gauge, last seen
+   confidence). `/status` adds a `wake_word` block: `enabled`,
+   `loaded_models[]`, `last_detection_at_ms_ago`, `last_score`.
+4. **Hot-reload for `wake_word.threshold`.** Add to the M8A reload
+   field catalog under "hot" — model_paths stays restart-required
+   (loading new ONNX models mid-run is risky). Operator tunes the
+   threshold against their voice without bouncing the process.
+
+**Tier 2 — it actually detects (~2 days)**
+
+5. **Real openWakeWord ONNX inference** in `src/audio/wake_word.cpp`.
+   The 3-stage pipeline:
+   - **melspectrogram.onnx** — 16 kHz int16 PCM (1280-sample
+     window, 320-sample hop = 80 ms / 20 ms) → 32 mel bins.
+   - **embedding_model.onnx** — Mel features → 96-dim embedding.
+   - **per-word classifier (\<wake-word\>.onnx)** — embedding window
+     → confidence in [0..1]. Different models per phrase.
+   The Mel + embedding ONNXs are shared across all wake words; the
+   classifier is per-word. WakeWord loads them once at construction
+   and reuses across `push_frame` calls. Replace the v1
+   `return 0.0F` placeholder with the real inference. Acceptance
+   target from the milestone Risks table: **< 2 ms/frame** on the
+   audio worker thread.
+
+**Tier 3 — custom phrases (~1.5 days)**
+
+6. **`acva demo wake-word`** — live mic for `--duration <s>` (default
+   5 s), feeds samples through the configured wake-word model, and
+   prints per-frame confidence + a final summary (max score, count
+   above threshold). Operator-side threshold tuning aid;
+   complements `acva demo capture` for VAD.
+7. **`tools/train-wake-word`** — Python helper that drives the
+   openWakeWord training pipeline using acva's local Piper.
+   Inputs: `<phrase>` + output filename. Synthesises ~50 min of
+   positive audio across many Piper voices, downloads /
+   caches the openWakeWord embedding model + negatives corpus,
+   trains the classifier head, emits ONNX into
+   `${XDG_DATA_HOME}/acva/models/wake_word/<name>.onnx` and
+   appends an entry to a local `models-extra.yaml` overlay. Drives
+   on Speaches' OpenAI-API surface (already running) so it doesn't
+   pull a separate Piper install. ~30 min wall-clock per phrase
+   on the dev box GPU.
+   - Open question: vendor openWakeWord's training code as a Python
+     dep, or install via `pip` and treat it as a build-time
+     prerequisite. The project's existing `tools/acva-models`
+     already requires PyYAML; another opt-in dep for `train-wake-word`
+     is acceptable as long as it's not a hard dep for the runtime.
+   - Adjacent decision: lives in the project repo
+     (`tools/train-wake-word`) vs a sibling project. The training
+     pipeline is loosely coupled to acva — only the output ONNX
+     needs to land in the registry. Sibling project is cleaner
+     architecturally; in-repo is more discoverable.
+
+**Recommended landing order:** Tier 1 first (foundations: catalog,
+aliases, observability, hot-reload). Tier 2 closes the v1 deferred
+work and makes the gate actually fire. Tier 3 is the custom-phrase
+delight — most operators will be fine with the openWakeWord stock
+words after Tier 2.
+
+The framework + gate (M8C Step 1 v1) are sufficient for the MVP
+gate semantics (operator opts in, the pipeline reliably suppresses
+background speech once a model is loaded). Phrase recognition + the
+operator workflow live in the follow-up tiers above.
 
 ## Step 1 — Wake-word (original spec)
 

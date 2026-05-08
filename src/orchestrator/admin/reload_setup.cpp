@@ -34,6 +34,22 @@ void ReloadSetup::register_log_callback() {
         });
 }
 
+void ReloadSetup::register_wake_word_callback(audio::WakeWord* ww) {
+    if (ww == nullptr) return;
+    reloader_.register_callback("wake_word",
+        [ww](const config::Config& live,
+             const config::ReloadDiff& diff) {
+            for (const auto& f : diff.changed_hot) {
+                if (f == "audio.wake_word.threshold") {
+                    ww->update_threshold(live.audio.wake_word.threshold);
+                    log::info("config", fmt::format(
+                        "audio.wake_word.threshold → {:.3f}",
+                        static_cast<double>(live.audio.wake_word.threshold)));
+                }
+            }
+        });
+}
+
 void ReloadSetup::register_endpointer_callback(audio::Endpointer* ep) {
     if (ep == nullptr) return;
     reloader_.register_callback("endpointer",

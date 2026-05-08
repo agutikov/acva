@@ -373,6 +373,22 @@ void resolve_aliases(Config& cfg) {
             TtsVoice{ .model_id = it->second.id,
                        .voice_id = it->second.voice };
     }
+
+    // ---- Wake-word: alias → relative path under the XDG data root. ----
+    // Symmetric with VAD: the registry stores bare filenames and the
+    // resolver prepends `models/wake_word/` so bootstrap.cpp's
+    // path resolver (which itself prepends `${XDG}/acva/`) lands on
+    // `${XDG}/acva/models/wake_word/<file>`. Entries that don't
+    // match an alias are kept verbatim — they may be a path the
+    // operator wrote directly, or a typo (the `_shared_*` infra
+    // entries are not generally referenced from cfg.audio.wake_word
+    // — `tools/acva-models install` pulls them automatically).
+    for (auto& entry : cfg.audio.wake_word.model_paths) {
+        if (auto it = cfg.models.wake_word.find(entry);
+            it != cfg.models.wake_word.end()) {
+            entry = "models/wake_word/" + it->second.file;
+        }
+    }
 }
 
 } // namespace detail

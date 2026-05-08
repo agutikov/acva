@@ -1,5 +1,6 @@
 #pragma once
 
+#include "audio/wake_word.hpp"
 #include "dialogue/barge_in.hpp"
 #include "metrics/registry.hpp"
 
@@ -9,15 +10,18 @@
 
 namespace acva::orchestrator {
 
-// M7 — small poller that mirrors BargeInDetector counters into the
-// metrics gauges. Runs on a dedicated 1 Hz thread so it doesn't have
-// to share locks with the capture / TTS pollers (each of which owns
-// non-trivial mutexes for its own subsystem).
+// M7 + M8C Step 1 — small poller that mirrors audio-pipeline
+// observability counters (barge-in + wake-word) into the metrics
+// gauges. Runs on a dedicated 1 Hz thread so it doesn't have to
+// share locks with the capture / TTS pollers (each of which owns
+// non-trivial mutexes for its own subsystem). Either pointer may be
+// null — only the live ones get polled.
 //
 // RAII: stop()+join() in the destructor; idempotent stop().
 class BargeInMetricsPoller {
 public:
     BargeInMetricsPoller(dialogue::BargeInDetector* detector,
+                         audio::WakeWord* wake_word,
                          std::shared_ptr<metrics::Registry> registry);
     ~BargeInMetricsPoller();
 
@@ -31,6 +35,7 @@ public:
 
 private:
     dialogue::BargeInDetector* detector_;
+    audio::WakeWord*           wake_word_;
     std::shared_ptr<metrics::Registry> registry_;
     std::atomic<bool> stop_{false};
     std::thread       thread_;

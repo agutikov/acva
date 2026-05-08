@@ -2,6 +2,8 @@
 
 #include "config/config.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -60,11 +62,47 @@ public:
     // tests/test_wake_word.cpp + the pipeline-gate tests.
     void set_test_score(float score) noexcept { test_score_ = score; }
 
+    // M8C Step 1 follow-up — observability surface.
+    // The pipeline reads `threshold()` each frame; M8A reload
+    // pushes new values via `update_threshold(...)` from the HTTP
+    // /reload + SIGHUP path.
+    [[nodiscard]] float threshold() const noexcept {
+        return threshold_.load(std::memory_order_acquire);
+    }
+    void update_threshold(float v) noexcept {
+        threshold_.store(v, std::memory_order_release);
+    }
+
+    [[nodiscard]] std::uint64_t detections_total() const noexcept {
+        return detections_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] float last_score() const noexcept {
+        return last_score_.load(std::memory_order_acquire);
+    }
+    // Steady-clock instant of the last positive detection, default
+    // construction (epoch) when none has fired yet.
+    [[nodiscard]] std::chrono::steady_clock::time_point last_detection_at() const noexcept {
+        return std::chrono::steady_clock::time_point{
+            std::chrono::nanoseconds{last_detection_ns_.load(std::memory_order_acquire)}};
+    }
+
+    // Number of loaded models. Useful for /status output.
+    [[nodiscard]] std::size_t model_count() const noexcept;
+
 private:
     struct Impl;
 
     config::WakeWordConfig cfg_;
     float                  test_score_ = -1.0F;
+
+    // M8A-reloadable threshold + observability counters. Atomic so
+    // the pipeline worker thread can read while the reload + status
+    // threads write.
+    std::atomic<float>        threshold_;
+    std::atomic<std::uint64_t> detections_total_{0};
+    std::atomic<float>         last_score_{0.0F};
+    std::atomic<std::int64_t>  last_detection_ns_{0};
+
     std::unique_ptr<Impl>  impl_;
 };
 

@@ -627,11 +627,29 @@ struct VadModelEntry {
     std::string purpose;
 };
 
+// M8C Step 1 follow-up — wake-word ONNX models. openWakeWord
+// publishes its stock phrases (hey_jarvis, alexa, ok_google, ...)
+// plus two shared infra graphs (melspectrogram, embedding_model)
+// that every wake-word classifier depends on. The registry catalogs
+// all of them; `tools/acva-models install <wake-alias>` auto-pulls
+// the shared infra graphs alongside the chosen phrase classifier.
+struct WakeWordModelEntry {
+    // Filename inside ${ACVA_MODELS_DIR}/wake_word/.
+    std::string file;
+    std::string url;
+    std::uint64_t size = 0;
+    std::string purpose;
+    // Optional: when set, sha256 hex of the file. `tools/acva-models
+    // verify wake_word` checks this; empty disables.
+    std::string sha256;
+};
+
 struct ModelsConfig {
-    std::map<std::string, LlmModelEntry> llm;
-    std::map<std::string, SttModelEntry> stt;
-    std::map<std::string, TtsModelEntry> tts;
-    std::map<std::string, VadModelEntry> vad;
+    std::map<std::string, LlmModelEntry>        llm;
+    std::map<std::string, SttModelEntry>        stt;
+    std::map<std::string, TtsModelEntry>        tts;
+    std::map<std::string, VadModelEntry>        vad;
+    std::map<std::string, WakeWordModelEntry>   wake_word;
 };
 
 // Personality registry — a thin overlay on top of the existing subsystem

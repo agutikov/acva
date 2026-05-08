@@ -98,6 +98,8 @@ TEST_CASE("reload: each hot field is detected on its own") {
         {"vad.hangover_ms",                  "vad:\n  hangover_ms: 800\n"},
         {"tts.tempo_wpm",                    "tts:\n  tempo_wpm: 160\n"},
         {"logging.level",                    "logging:\n  level: debug\n"},
+        {"audio.wake_word.threshold",
+            "audio:\n  wake_word:\n    threshold: 0.85\n"},
     };
     for (const auto& c : cases) {
         CAPTURE(c.name);
@@ -117,6 +119,8 @@ TEST_CASE("reload: each restart-required field rejects the whole reload") {
         {"llm.model",            "llm:\n  model: other-model\n"},
         {"memory.db_path",       "memory:\n  db_path: /tmp/other.db\n"},
         {"audio.input_device",   "audio:\n  input_device: foobar\n"},
+        {"audio.wake_word.enabled",
+            "audio:\n  wake_word:\n    enabled: true\n"},
         {"audio.sample_rate_hz", "audio:\n  sample_rate_hz: 44100\n"},
         {"control.port",         "control:\n  port: 12000\n"},
         {"vad.model_path",       "vad:\n  model_path: /tmp/silero.onnx\n"},

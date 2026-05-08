@@ -50,6 +50,13 @@ void diff_one(const Config& cur, const Config& cand,
           "tts.tempo_wpm",                    Class::Hot);
     check(cur.logging.level                    != cand.logging.level,
           "logging.level",                    Class::Hot);
+    // M8C Step 1 follow-up — wake-word threshold is hot-reloadable
+    // so operators can tune it against their voice without bouncing
+    // the process. `model_paths` and `enabled` stay restart-required
+    // (loading or unloading ONNX models mid-run is risky on the
+    // audio worker thread).
+    check(cur.audio.wake_word.threshold        != cand.audio.wake_word.threshold,
+          "audio.wake_word.threshold",        Class::Hot);
 
     // ----- Restart-required -----
     // Endpoints + model identities — picking up a new URL or model id
@@ -75,6 +82,17 @@ void diff_one(const Config& cur, const Config& cand,
     check(cur.audio.capture_enabled  != cand.audio.capture_enabled,  "audio.capture_enabled",  Class::Restart);
     check(cur.audio.sample_rate_hz   != cand.audio.sample_rate_hz,   "audio.sample_rate_hz",   Class::Restart);
     check(cur.audio.buffer_frames    != cand.audio.buffer_frames,    "audio.buffer_frames",    Class::Restart);
+
+    // M8C Step 1 follow-up — wake-word.enabled + model_paths are
+    // restart-required (toggling the gate or swapping ONNX models
+    // mid-run is risky on the audio worker thread).
+    check(cur.audio.wake_word.enabled     != cand.audio.wake_word.enabled,
+          "audio.wake_word.enabled",     Class::Restart);
+    check(cur.audio.wake_word.model_paths != cand.audio.wake_word.model_paths,
+          "audio.wake_word.model_paths", Class::Restart);
+    check(cur.audio.wake_word.followup_window_ms
+              != cand.audio.wake_word.followup_window_ms,
+          "audio.wake_word.followup_window_ms", Class::Restart);
 
     // Control plane — the listening port can't be moved without
     // reopening the socket, and the bind address change is similar.
@@ -135,6 +153,7 @@ void apply_hot_fields(Config& live,
         else if (f == "vad.hangover_ms")                  live.vad.hangover_ms                  = candidate.vad.hangover_ms;
         else if (f == "tts.tempo_wpm")                    live.tts.tempo_wpm                    = candidate.tts.tempo_wpm;
         else if (f == "logging.level")                    live.logging.level                    = candidate.logging.level;
+        else if (f == "audio.wake_word.threshold")        live.audio.wake_word.threshold        = candidate.audio.wake_word.threshold;
         // Unknown name in changed_hot would be a bug in diff_configs;
         // silently ignore here since the catalog above is the one
         // truth-source.

@@ -328,6 +328,10 @@ int main(int argc, char** argv) {
     // capture is disabled.
     reload.register_endpointer_callback(
         audio_pipeline ? audio_pipeline->endpointer() : nullptr);
+    // M8C Step 1 follow-up — same pattern for the wake-word
+    // threshold. model_paths + enabled stay restart-required.
+    reload.register_wake_word_callback(
+        audio_pipeline ? audio_pipeline->wake_word() : nullptr);
 
     // ----- M4B + M5 STT path -----
     auto stt_stack = acva::orchestrator::build_stt_stack(
@@ -406,10 +410,12 @@ int main(int argc, char** argv) {
         bi->start();
     }
 
-    // M7 — RAII poller mirroring BargeInDetector counters into the
-    // metrics gauges. Tiny standalone thread (1 Hz cadence).
+    // M7 + M8C Step 1 — RAII poller mirroring BargeInDetector
+    // and WakeWord counters into the metrics gauges. Tiny standalone
+    // thread (1 Hz cadence). Either pointer may be null.
+    auto* wake_word_ptr = audio_pipeline ? audio_pipeline->wake_word() : nullptr;
     acva::orchestrator::BargeInMetricsPoller bi_metrics(
-        dialogue->barge_in(), registry);
+        dialogue->barge_in(), wake_word_ptr, registry);
     bi_metrics.start();
 
     // ----- stdin text-input mode (M1 era) — only the line reader -----

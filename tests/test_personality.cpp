@@ -307,6 +307,85 @@ personalities:
     CHECK(cfg.audio.wake_word.threshold == doctest::Approx(0.85));
 }
 
+TEST_CASE("wake_word: alias resolves to registry filename") {
+    constexpr auto yaml = R"(
+logging: {}
+control: {}
+models:
+  wake_word:
+    hey-jarvis:
+      file: hey_jarvis_v0.1.onnx
+      url:  https://example/hey_jarvis_v0.1.onnx
+      purpose: "stock"
+    alexa:
+      file: alexa_v0.1.onnx
+      url:  https://example/alexa_v0.1.onnx
+      purpose: "stock"
+audio:
+  wake_word:
+    enabled: true
+    model_paths:
+      - hey-jarvis
+      - alexa
+      - /custom/abs/path.onnx
+)";
+    auto r = load_from_string(yaml);
+    REQUIRE(std::holds_alternative<Config>(r));
+    auto& cfg = std::get<Config>(r);
+    REQUIRE(cfg.audio.wake_word.model_paths.size() == 3);
+    // Aliases expanded; absolute path kept verbatim.
+    CHECK(cfg.audio.wake_word.model_paths[0] == "models/wake_word/hey_jarvis_v0.1.onnx");
+    CHECK(cfg.audio.wake_word.model_paths[1] == "models/wake_word/alexa_v0.1.onnx");
+    CHECK(cfg.audio.wake_word.model_paths[2] == "/custom/abs/path.onnx");
+}
+
+TEST_CASE("wake_word: unknown alias is kept verbatim (not rewritten to empty)") {
+    constexpr auto yaml = R"(
+logging: {}
+control: {}
+audio:
+  wake_word:
+    enabled: true
+    model_paths:
+      - some-typo
+)";
+    auto r = load_from_string(yaml);
+    REQUIRE(std::holds_alternative<Config>(r));
+    auto& cfg = std::get<Config>(r);
+    REQUIRE(cfg.audio.wake_word.model_paths.size() == 1);
+    CHECK(cfg.audio.wake_word.model_paths[0] == "some-typo");
+}
+
+TEST_CASE("wake_word: personality model_paths overlay → alias resolution") {
+    // Personality REPLACES the top-level model_paths with aliases;
+    // resolve_aliases (which runs AFTER apply_active_personality)
+    // then maps the personality's aliases through the registry.
+    constexpr auto yaml = R"(
+logging: {}
+control: {}
+models:
+  wake_word:
+    hey-jarvis: { file: hey_jarvis_v0.1.onnx, url: x, purpose: s }
+    alexa:      { file: alexa_v0.1.onnx,       url: x, purpose: s }
+audio:
+  wake_word:
+    enabled: true
+    model_paths: [alexa]
+active_personality: jarvis_persona
+personalities:
+  jarvis_persona:
+    description: "wakes on jarvis"
+    wake_word:
+      model_paths: [hey-jarvis]
+)";
+    auto r = load_from_string(yaml);
+    REQUIRE(std::holds_alternative<Config>(r));
+    auto& cfg = std::get<Config>(r);
+    REQUIRE(cfg.audio.wake_word.model_paths.size() == 1);
+    CHECK(cfg.audio.wake_word.model_paths[0] ==
+          "models/wake_word/hey_jarvis_v0.1.onnx");
+}
+
 TEST_CASE("personality: empty wake_word block leaves top-level untouched") {
     constexpr auto yaml = R"(
 logging: {}

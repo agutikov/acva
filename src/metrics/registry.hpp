@@ -140,6 +140,15 @@ public:
     void set_speaches_vram_used_mib(double mib);
     void set_speaches_wedged(bool wedged);
 
+    // M8C Step 1 follow-up — wake-word observability.
+    // `voice_wake_word_detections_total` — cumulative count of
+    // frames whose top score crossed the live threshold.
+    // `voice_wake_word_last_score` — most recent confidence (0..1).
+    // Polled from main.cpp's metrics thread; absolute values, no
+    // labels (one wake-word engine per process).
+    void set_wake_word_detections_total(double total);
+    void set_wake_word_last_score(double score);
+
     // Subscribe metrics-collection handlers to the bus. Call after
     // construction. Returns subscriptions which the caller must keep alive.
     [[nodiscard]] std::vector<event::SubscriptionHandle> subscribe(event::EventBus& bus);
@@ -217,6 +226,12 @@ private:
     prometheus::Gauge*                         speaches_vram_used_metric_       = nullptr;
     prometheus::Family<prometheus::Gauge>*     speaches_wedged_                 = nullptr;
     prometheus::Gauge*                         speaches_wedged_metric_          = nullptr;
+
+    // M8C Step 1 follow-up — wake-word.
+    prometheus::Family<prometheus::Gauge>*     wake_word_detections_            = nullptr;
+    prometheus::Gauge*                         wake_word_detections_metric_     = nullptr;
+    prometheus::Family<prometheus::Gauge>*     wake_word_last_score_            = nullptr;
+    prometheus::Gauge*                         wake_word_last_score_metric_     = nullptr;
 
     // Per-(turn, seq) TTS timer state, captured between TtsStarted and
     // the first TtsAudioChunk so we can compute first-audio latency.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "audio/endpointer.hpp"
+#include "audio/wake_word.hpp"
 #include "config/config.hpp"
 #include "config/reload.hpp"
 
@@ -35,6 +36,11 @@ public:
     // Register the VAD-thresholds reload callback for the given
     // Endpointer. No-op when ep is nullptr (capture disabled).
     void register_endpointer_callback(audio::Endpointer* ep);
+
+    // M8C Step 1 follow-up — register the wake-word threshold
+    // reload callback for the given engine. No-op when ww is
+    // nullptr (capture disabled).
+    void register_wake_word_callback(audio::WakeWord* ww);
 
 private:
     config::ConfigReloader reloader_;

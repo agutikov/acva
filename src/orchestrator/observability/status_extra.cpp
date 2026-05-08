@@ -59,6 +59,30 @@ make_status_extra(const supervisor::Supervisor& sup,
             }
         }
 
+        // M8C Step 1 follow-up — wake-word state. Present whenever
+        // the pipeline + WakeWord engine are wired in (i.e.
+        // capture_enabled). Reports threshold + last score regardless
+        // of cfg.audio.wake_word.enabled so operators can experiment
+        // with thresholds via /reload without restarting.
+        if (capture && capture->pipeline()) {
+            if (auto* ww = capture->pipeline()->wake_word(); ww != nullptr) {
+                const auto last_at = ww->last_detection_at();
+                const auto last_ms_ago =
+                    last_at.time_since_epoch().count() == 0
+                        ? -1
+                        : std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now() - last_at).count();
+                out += fmt::format(
+                    R"(,"wake_word":{{"loaded_models":{},)"
+                    R"("threshold":{:.3f},"last_score":{:.3f},)"
+                    R"("detections_total":{},"last_detection_ms_ago":{}}})",
+                    ww->model_count(), ww->threshold(),
+                    ww->last_score(),
+                    ww->detections_total(),
+                    last_ms_ago);
+            }
+        }
+
         // M6 — APM block. Present whenever the pipeline is up and an
         // APM stage was constructed (i.e., capture_enabled + a
         // loopback ring + a non-stub build of webrtc-audio-processing-1).

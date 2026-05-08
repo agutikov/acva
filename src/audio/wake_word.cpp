@@ -32,7 +32,9 @@ struct WakeWord::Impl {};
 #endif
 
 WakeWord::WakeWord(const config::WakeWordConfig& cfg)
-    : cfg_(cfg), impl_(std::make_unique<Impl>()) {
+    : cfg_(cfg),
+      threshold_(cfg.threshold),
+      impl_(std::make_unique<Impl>()) {
 
     if (!cfg_.enabled) {
         // Engine is constructed but inert — pipeline checks
@@ -88,18 +90,40 @@ bool WakeWord::loaded() const noexcept {
 }
 
 float WakeWord::push_frame(std::span<const std::int16_t> /*samples*/) {
+    float score = 0.0F;
     if (test_score_ >= 0.0F) {
-        return test_score_;
+        score = test_score_;
+    } else if (cfg_.enabled && loaded()) {
+        // Real ONNX inference is a follow-up — openWakeWord's
+        // published models use a 3-stage pipeline (Mel spectrogram
+        // → embedding model → per-word classifier) and the right
+        // Mel preprocessor depends on which model variant the
+        // operator picked. The gate framework + tests are exercised
+        // via set_test_score for v1; landing the actual inference
+        // is the next slice.
+        score = 0.0F;
     }
-    if (!cfg_.enabled || !loaded()) return 0.0F;
 
-    // Real ONNX inference is a follow-up — openWakeWord's published
-    // models use a 3-stage pipeline (Mel spectrogram → embedding
-    // model → per-word classifier) and the right Mel preprocessor
-    // depends on which model variant the operator picked. The gate
-    // framework + tests are exercised via set_test_score for v1;
-    // landing the actual inference is the next slice.
-    return 0.0F;
+    // Observability bookkeeping — even the test_score path runs
+    // through here so dashboards reflect the gate's actual
+    // behavior. Reads are atomic (relaxed) for the counters and
+    // acq/rel for the score so /status sees a consistent snapshot.
+    last_score_.store(score, std::memory_order_release);
+    if (score >= threshold_.load(std::memory_order_acquire)) {
+        detections_total_.fetch_add(1, std::memory_order_relaxed);
+        const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        last_detection_ns_.store(ns, std::memory_order_release);
+    }
+    return score;
+}
+
+std::size_t WakeWord::model_count() const noexcept {
+#ifdef ACVA_HAVE_ONNXRUNTIME
+    return impl_ ? impl_->sessions.size() : 0;
+#else
+    return 0;
+#endif
 }
 
 } // namespace acva::audio

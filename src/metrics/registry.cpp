@@ -256,6 +256,22 @@ Registry::Registry() : registry_(std::make_shared<prometheus::Registry>()) {
               "`docker compose restart speaches`.")
         .Register(*registry_);
     speaches_wedged_metric_ = &speaches_wedged_->Add({});
+
+    // M8C Step 1 follow-up — wake-word observability.
+    wake_word_detections_ = &prometheus::BuildGauge()
+        .Name("voice_wake_word_detections_total")
+        .Help("Cumulative count of frames whose wake-word confidence "
+              "crossed the live threshold. Polled from the AudioPipeline's "
+              "WakeWord engine.")
+        .Register(*registry_);
+    wake_word_detections_metric_ = &wake_word_detections_->Add({});
+
+    wake_word_last_score_ = &prometheus::BuildGauge()
+        .Name("voice_wake_word_last_score")
+        .Help("Most recent wake-word confidence in [0..1]. 0 when the "
+              "engine is disabled or no models are loaded.")
+        .Register(*registry_);
+    wake_word_last_score_metric_ = &wake_word_last_score_->Add({});
 }
 
 void Registry::on_event_published(const char* event_name) {
@@ -284,6 +300,14 @@ void Registry::set_speaches_vram_used_mib(double mib) {
 
 void Registry::set_speaches_wedged(bool wedged) {
     if (speaches_wedged_metric_) speaches_wedged_metric_->Set(wedged ? 1.0 : 0.0);
+}
+
+void Registry::set_wake_word_detections_total(double total) {
+    if (wake_word_detections_metric_) wake_word_detections_metric_->Set(total);
+}
+
+void Registry::set_wake_word_last_score(double score) {
+    if (wake_word_last_score_metric_) wake_word_last_score_metric_->Set(score);
 }
 
 void Registry::set_fsm_state(const char* state_name) {

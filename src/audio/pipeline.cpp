@@ -173,7 +173,10 @@ void AudioPipeline::process_frame(const AudioFrame& frame) {
     bool gate_is_open = true;
     if (cfg_.wake_word.enabled && wake_word_) {
         const float score = wake_word_->push_frame(resampled);
-        if (score >= cfg_.wake_word.threshold) {
+        // Read the live threshold from the WakeWord engine so M8A
+        // /reload edits to `audio.wake_word.threshold` take effect
+        // on the very next frame.
+        if (score >= wake_word_->threshold()) {
             gate_open_stamp_ = frame.captured_at;
         }
         const auto window = std::chrono::milliseconds{
