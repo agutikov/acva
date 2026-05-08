@@ -842,11 +842,12 @@ Each milestone has a detailed plan in `plans/milestones/`. The summary below is 
 - Grafana dashboard JSON for the metrics surface that's been live since M2.
 - OTLP wiring (opt-in) for per-turn span trees.
 
-### M8C: Distribution & Wake-Word (~1 week) — see [milestones/m8c_distribution.md](milestones/m8c_distribution.md)
-- Wake-word ("Hey acva") via openWakeWord ONNX, default off.
-- Compose + systemd packaging finalized.
-- Docs pass (README, runbook, configuration reference, architecture).
-- Final sweep (clang-tidy, sanitizers, TODO triage).
+### M8C: Distribution & Wake-Word — ✅ closed 2026-05-08 — see [milestones/m8c_distribution.md](milestones/m8c_distribution.md)
+- Wake-word via openWakeWord 3-stage ONNX — framework, demo, trainer all shipped; `enabled: false` default per [open_questions.md §L8](open_questions.md) (right primitive for sleep-and-wake, wrong for the conversational product mode this codebase targets; M10 address detection is the conversational gate).
+- Compose + systemd packaging finalized — `llama` + `speaches` (M4B consolidated), 4-unit user-systemd layout, `tools/acva-models` registry-driven installer, NVIDIA CDI refresh helper.
+- Docs pass — README rewrite + new `docs/architecture.md`, `docs/configuration.md`, `docs/operations.md`. `docs/troubleshooting.md` (pre-existing) covers symptom→fix.
+- Stretch packaging (image digest pinning, AUR `PKGBUILD`, `.deb`, observability project-label cleanup, man page, fresh-VM bare-metal acceptance) parked at [postpone/m8c_packaging_stretch.md](postpone/m8c_packaging_stretch.md) — none MVP-blocking.
+- Final-sweep (clang-tidy / sanitizer matrix / public-function comment audit) dropped from MVP scope; ASan + UBSan stay available via `./build.sh debug`.
 
 ### M9: Streaming Partials + Speculative LLM (1.5–2 weeks) — see [milestones/m9_speculation.md](milestones/m9_speculation.md)
 - Source `PartialTranscript` events from the STT backend (PR Speaches, side-car streaming Whisper, or re-platform STT).

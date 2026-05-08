@@ -3,7 +3,7 @@
 
 
 
-move existing diagrams and project desing into docs, review, update if anything changed
+move existing diagrams and project desing into docs; review, update if anything changed
 
 archive (move) all plans docs (exept postpone) into docs/history/MVP
 
@@ -16,6 +16,8 @@ if need to refer to some implementation step - all of them were implemented in M
 BUG: I don't see any metrics in grafana and prometheus
 
 BUG: wake-word has unexpectedly long latency and threshold
+
+BUG: does model-controller works? how I can see it?
 
 --------------------------------------------------------------------------------
 
@@ -32,6 +34,10 @@ also use open questions doc to track questions
 
 ## Random Ideas
 
+
+move config or some it's parts into db
+
+
 convert plans and docs history into single-file design with history of acva creation
 process it and load into memory + add memory read instructions into context
 so agent can answer questions about itself
@@ -41,6 +47,7 @@ memory-personality relations - everything is optional: n-n relation
 
 
 Dialog:
+    - SILENCE!!!! SHUTUP!!!
     - silence is important, remove annoying "How can I help you" after every response
     - verify and eliminate hidden prompts in GGUF
     - chat template

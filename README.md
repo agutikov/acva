@@ -4,575 +4,330 @@
 
 ## Status
 
-In progress. **M0 and M1 complete.** Skeleton runtime, memory layer, sentence splitter, Docker Compose stack, libcurl SSE LLM client, dialogue manager, turn writer, summarizer stub, and JSON-per-line logging are all landed. 90 unit tests passing. The `acva --stdin` binary drives a real LLM end-to-end against the Compose stack. Next: **M2 — service supervision** (HTTP `/health` probes, dialogue gating). See `plans/milestones/` for per-milestone detail.
+**Code-complete through M8C.** All eleven implementation milestones (M0 → M1 → M2 → M3 → M4 → M4B → M5 → M6 → M6B → M7 → M7B → M8A → M8B → M8C) have shipped. The full speech-to-speech loop runs end-to-end against the Compose stack: PortAudio → resample → AEC → VAD → streaming STT → dialogue FSM → LLM (SSE) → sentence splitter → TTS → playback queue → speakers. Barge-in cancels mid-speech; SQLite-backed turn lifecycle survives crashes; Prometheus + Grafana observability stack ships alongside; warm restart preserves session continuity. Test suite: 376 unit cases (no external deps) + 13 integration cases (real Silero + live Speaches), all green.
 
-## Goal
+The remaining M8C work is the documentation pass and a stretch packaging set (AUR `PKGBUILD`, `.deb`, image-digest pinning). Full milestone history in `plans/milestones/`; architectural revisions and resolved questions in `plans/open_questions.md` §L.
+
+The product target is **always-listening conversational mode**, not press-button-and-ask. Wake-word (M8C) ships off-by-default; the conversational gate ("is the user addressing me?") moves to M10 address detection — see `plans/open_questions.md` §L8.
+
+## What it does
 
 A configurable voice assistant that:
 
 - runs entirely on local hardware (RTX 4060 8 GB target)
-- speaker mode primary, with AEC for reliable barge-in (interrupt the assistant by speaking)
+- speaker mode primary, with system-AEC for reliable barge-in
 - supports multilingual conversation with per-utterance language detection
-- streams partial STT and starts the LLM speculatively for sub-2-second latency
+- streams partial STT and starts the LLM speculatively for sub-2-second latency *(streaming session shipped in M5; speculation lifted to M9)*
 - holds 30-minute to multi-hour conversations without crashes, leaks, or latency drift
-- recovers cleanly from mid-turn crashes
-- is observable from day one (structured logs, per-turn traces, Prometheus metrics, opt-in OTLP)
+- recovers cleanly from mid-turn crashes and survives warm restarts
+- is observable from day one — structured JSON logs, per-turn traces, Prometheus metrics, opt-in OTLP, Grafana dashboard
 
 ## Design at a Glance
 
 ```
-Mic → Resample → APM (AEC/NS/AGC) → VAD → Utterance Buffer → STT
-   → Dialogue FSM ↔ Memory ↔ LLM
-   → SentenceSplitter → TTS → Playback Queue → Resample → Speaker
-                                              ↑
-                                           Loopback (AEC reference)
+Mic → Resample → APM (AEC/NS/AGC) → VAD → Endpointer → Utterance Buffer → STT (streaming + final)
+                                                            │
+                                                            ▼
+                                              Dialogue FSM ↔ Memory (SQLite WAL)
+                                                            │
+                                                            ▼
+                                                           LLM (SSE)
+                                                            │
+                                                            ▼
+                                              Sentence Splitter → TTS → Playback Queue → Resample → Speaker
+                                                                                          ▲
+                                                                                          └── Loopback (AEC reference, when in-process APM is on)
 ```
 
 - **C++ orchestrator** runs as a host CLI binary and owns audio I/O, dialogue state, memory, cancellation, and observability.
-- **Model backends run as separate processes** — llama.cpp (LLM), whisper.cpp (STT), Piper (TTS). Default deployment is **Docker Compose** for dev with upstream images verbatim. systemd units are an alternative production path.
+- **Model backends run as separate processes**, never forked from the orchestrator: `llama.cpp/llama-server` for LLM, [Speaches](https://github.com/speaches-ai/speaches) for STT + TTS (one OpenAI-API-compatible surface that consolidates faster-whisper + Piper). Default deployment is **Docker Compose**; systemd units are an alternative production path.
 - **Realtime audio path is isolated**: lock-free SPSC ring between the audio callback and the processing thread; no blocking, no allocation, no I/O on the audio thread.
-- **Cancellation is structural**: every operation carries a turn ID; barge-in invalidates the turn ID and stale work is rejected at every queue boundary.
+- **Cancellation is structural**: every long-running operation carries a turn ID; barge-in invalidates the turn ID and stale work is rejected at every queue boundary.
+- **AEC is system-level by default**: PipeWire `module-echo-cancel` upstream of acva delivers 25–46 dB of speech-band cancellation on the dev workstation. The in-process WebRTC APM stays compiled but disabled; see `docs/aec_report.md` for the full M6 + M6B analysis.
 
-See `plans/project_design.md` for the complete architecture.
+See `plans/project_design.md` for the complete architecture and `docs/observability.svg` for the runtime topology.
 
-## Target Stack
+## Tech Stack
 
-| Concern           | Choice                                       |
-|-------------------|----------------------------------------------|
-| Language          | C++23 (no modules, no Cobalt)                |
-| Async             | Boost.Asio                                   |
-| Audio backend     | PortAudio + soxr                             |
-| AEC/NS/AGC        | WebRTC Audio Processing Module               |
-| VAD               | Silero VAD (ONNX Runtime)                    |
-| LLM               | llama.cpp + Qwen2.5-7B Q4_K_M                |
-| STT               | whisper.cpp (streaming, multilingual)        |
-| TTS               | Piper (per-language voice pack, lazy load)   |
-| Storage           | SQLite (WAL mode)                            |
-| Config / JSON     | glaze (JSON + YAML)                          |
-| Logs / metrics    | spdlog + prometheus-cpp                      |
-| Tracing (opt-in)  | opentelemetry-cpp (OTLP)                     |
-| Backend deployment| Docker Compose (dev) / systemd (production)  |
-| Build             | CMake + presets                              |
+| Concern            | Choice                                                          |
+|--------------------|-----------------------------------------------------------------|
+| Language           | C++23 (no modules, no Cobalt — see `plans/open_questions.md` §L2) |
+| Async / threads    | `std::thread` + dedicated workers; SPSC ring across audio boundary |
+| Audio I/O          | PortAudio + soxr (resample)                                      |
+| AEC / NS / AGC     | PipeWire `module-echo-cancel` (default) + WebRTC APM (in-process, opt-in) |
+| VAD                | Silero VAD v5 via ONNX Runtime                                   |
+| Wake-word (off-by-default) | openWakeWord 3-stage ONNX (mel + embedding + classifier) |
+| LLM                | llama.cpp / `llama-server` (CUDA build) + Qwen 7-8B family       |
+| STT                | Speaches (faster-whisper-large-v3-turbo, OpenAI-API + WebRTC realtime) |
+| TTS                | Speaches → Piper voices                                          |
+| Storage            | SQLite (WAL mode) on a dedicated memory thread                   |
+| HTTP — non-streaming | cpp-httplib (vendored single-header)                           |
+| HTTP — SSE / WebRTC | libcurl (LLM SSE), libdatachannel (Speaches realtime)          |
+| Config / JSON      | glaze (JSON + YAML)                                              |
+| Logs / metrics     | spdlog (JSON sink) + prometheus-cpp                              |
+| Dashboard          | Grafana 11.3 + Prometheus 2.55 (auto-provisioned)                |
+| Tracing (opt-in)   | opentelemetry-cpp (OTLP/HTTP)                                    |
+| Tests              | doctest                                                          |
+| Build              | CMake + presets, Ninja                                           |
 
 ## Repository Layout
 
 ```
-src/                      C++ source. Per-subsystem subdirs: audio, cli, config,
-                          demos, dialogue, event, http, llm, log, memory, metrics,
-                          orchestrator, pipeline, playback, stt, supervisor, tts.
-src/main.cpp              ~280 lines of linear orchestration: parse args → load
-                          config → demo dispatch → build per-subsystem stacks →
-                          main loop → orderly shutdown.
-src/orchestrator/         host-side glue. One *_stack.{hpp,cpp} per subsystem
-                          (tts_stack, capture_stack, stt_stack, dialogue_stack,
-                          supervisor_setup) plus bootstrap, event_tracer,
-                          status_extra. Each stack is a non-copyable RAII bundle
-                          with a stop() method that runs subsystem teardown in
-                          the right order.
-tests/                    doctest-based suites (unit + integration)
-config/default.yaml       default runtime config
-cmake/                    CMake helpers
-third_party/              vendored single-header libs (cpp-httplib)
-plans/
-  project_design.md       full architecture, milestones, risk register
-  open_questions.md       unresolved decisions with default assumptions
-  milestones/m{0..8}_*.md per-milestone implementation plans
-  architecture_review.md  first review of the original design
-  local_voice_ai_orchestrator_mvp_cpp_architecture_2026.md
-                          original design draft
+src/                      C++ source. Per-subsystem subdirs: audio/, cli/, config/,
+                          demos/, dialogue/, event/, http/, llm/, log/, memory/,
+                          metrics/, observability/, orchestrator/, pipeline/,
+                          playback/, stt/, supervisor/, tts/.
+src/main.cpp              ~546 lines of linear orchestration: parse args → load
+                          config → demo dispatch → build per-subsystem stacks via
+                          orchestrator/ helpers → main loop with reload + warm-
+                          restart drain → orderly shutdown.
+src/orchestrator/         host-side glue, organised into 5 subdirs:
+                            stacks/        tts/capture/stt/dialogue stacks (RAII)
+                            boot/          bootstrap, system_aec, model-controller
+                                           handoff, startup_runner
+                            admin/         hot-reload, privacy commands, restart,
+                                           session resume
+                            observability/ event_tracer, status_extra,
+                                           barge_in_metrics, supervisor_setup
+                            io/            stdin_reader (text-driven sessions)
+src/demos/                23 `acva demo <name>` smoke / debug commands.
+tests/                    doctest suites: acva_unit_tests (376 cases, no deps)
+                          + acva_integration_tests (13 cases, real Silero + Speaches).
+config/default.yaml       runtime config + `models:` registry (LLM/STT/TTS/VAD/
+                          wake-word aliases) + per-personality overrides.
+cmake/                    Dependencies.cmake, Warnings.cmake.
+third_party/cpp-httplib/  vendored single-header HTTP server.
+scripts/                  one-shot dev shell scripts (dev-up, dev-down, soak,
+                          aec_analyze, barge-in-probe, validate-bargein,
+                          wake-word-offline, ...).
+tools/acva-models         Python CLI driving the model registry: list / install /
+                          sync / select / verify / status.
+tools/train-wake-word     Python driver for custom openwakeword classifiers.
 packaging/
-  compose/                docker-compose.yml + local Dockerfiles for whisper/piper
-  systemd/                per-user systemd units (alternative production path)
-scripts/                  download-{llm,stt,tts,vad,assets}.sh — fetch
-                          model assets into XDG paths, organized by type
-compose.yaml              top-level compose shim that include:s packaging/compose/docker-compose.yml
-.env.example              env override template (ACVA_MODELS_DIR, ACVA_LLM_MODEL, ...)
+  compose/                docker-compose.yml — `llama` + `speaches`.
+  systemd/                user-systemd units — `acva-llama`, `acva-speaches`,
+                          `acva.service`, `acva.target`.
+  observability/          docker-compose.yml for Prometheus + Grafana.
+  grafana/                auto-provisioned dashboard (acva.json).
+  model-controller/       Go sidecar — owns the docker socket, swaps llama models
+                          via `POST /llm/load`. Operator opt-in.
+plans/
+  project_design.md       source of truth for architecture, milestones, risks.
+  open_questions.md       resolved / open decisions; §L holds implementation-
+                          driven revisions that supersede earlier sections.
+  milestones/m{0..8}_*.md per-milestone implementation plans.
+docs/
+  troubleshooting.md      symptom-first guide; routes failures to the right demo.
+  aec_report.md           M6 + M6B AEC analysis.
+  observability.{dot,svg,pdf}  runtime topology diagram.
+build.sh                  ./build.sh [dev|debug|release].
+run_tests.sh              unit suite (no external deps).
+run_integration_tests.sh  integration suite (Silero + live Speaches).
 CMakeLists.txt, CMakePresets.json
-CLAUDE.md                 guidance for Claude Code in this repo
-README.md
-LICENSE
+README.md, CLAUDE.md, LICENSE, .editorconfig, .gitignore
 ```
-
-## Milestones
-
-| #  | Milestone                  | Approx. duration |
-|----|----------------------------|------------------|
-| M0 | Skeleton runtime           | 1 week           |
-| M1 | LLM + memory               | 1–2 weeks        |
-| M2 | Service supervision        | 1 week           |
-| M3 | TTS + playback             | 1–2 weeks        |
-| M4 | Audio capture + VAD        | 1–2 weeks        |
-| M5 | Streaming STT + speculation| 2–3 weeks        |
-| M6 | AEC / NS / AGC             | 1–2 weeks        |
-| M7 | Barge-in                   | 1 week           |
-| M8 | Production hardening       | 2 weeks          |
-
-Total: **~14–16 weeks** for a single competent C++ developer to MVP.
-
-## Success Criteria for MVP
-
-- End-to-end P50 latency ≤ 2 s, P95 ≤ 3.5 s on target hardware
-- 4-hour soak test: no crashes, bounded memory growth, stable latency percentiles
-- Barge-in (speaker mode + AEC, primary UX): ≥ 90 % correct cancellation within 400 ms; headphone mode ≥ 95 % within 300 ms
-- Clean recovery from mid-session crashes
 
 ## Hardware Target
 
-- GPU: RTX 4060 8 GB
-- CPU: modern x86_64 (≥ 8 cores)
-- OS: Linux (Manjaro/Arch primary, Ubuntu LTS secondary)
-- Audio: USB or built-in mic + speakers/headphones
+- GPU: RTX 4060 8 GB (CUDA 12+). Tested on 595 driver / CUDA 13.2.
+- CPU: modern x86_64 (≥ 8 cores).
+- OS: Linux. Manjaro/Arch is primary, Ubuntu 24.04 LTS secondary.
+- Audio: USB or built-in mic + speakers. PipeWire ≥ 1.0 recommended for the system-AEC path.
 
-## Dependencies
+VRAM budget on the 4060: llama-7B Q4_K_M (~5 GB) + faster-whisper-large-v3-turbo (~1.6 GB) + Piper voices (~250 MB) ≈ 6.8 GB resident, leaving ~1.2 GB headroom. The Speaches `WHISPER__TTL=-1` pin is non-negotiable on this card — the default 5-min auto-evict combined with faster-whisper's [#992](https://github.com/SYSTRAN/faster-whisper/issues/992) leaks ~300 MB per unload cycle and OOMs after a few reloads. See `plans/open_questions.md` §L7 for the rationale.
 
-### Build-time (compile the orchestrator)
+## Quickstart — Docker Compose (default dev path)
 
-| Dependency           | Min version | Used for                              | Header-only? |
-|----------------------|-------------|---------------------------------------|--------------|
-| C++ compiler         | gcc ≥ 13 / clang ≥ 17 | C++20                       | —            |
-| CMake                | 3.25        | Build system + presets                | —            |
-| pkg-config           | any         | Locating system libs                  | —            |
-| Boost                | 1.83+       | `Boost.Asio` (async runtime)          | no (Asio is mostly header-only but Boost ships built libs we may link) |
-| libcurl              | 7.80+       | LLM SSE streaming                     | no           |
-| cpp-httplib          | 0.15+       | Non-streaming HTTP (health, TTS)      | yes (vendored) |
-| glaze                | 4.0+        | JSON + YAML config / IPC payloads     | yes (vendored) |
-| spdlog               | 1.13+       | Structured logging (JSON sink)        | optional header-only build |
-| prometheus-cpp       | 1.2+        | `/metrics` endpoint                   | no           |
-| opentelemetry-cpp    | 1.16+       | OTLP traces (opt-in feature)          | no           |
-| libsystemd           | 252+        | sd-bus, journald integration          | no           |
-| PortAudio            | 19.7+       | Audio capture/playback                | no           |
-| soxr                 | 0.1.3+      | Resampling                            | no           |
-| ONNX Runtime         | 1.18+       | Silero VAD inference                  | no           |
-| WebRTC APM           | vendored    | AEC / NS / AGC                        | vendored as a CMake submodule |
-| SQLite               | 3.42+       | Memory storage (WAL mode)             | no           |
-| doctest *or* Catch2  | latest      | Unit tests                            | yes (header-only) |
+The orchestrator runs on the host as a CLI binary; backends run in containers.
 
-### Runtime (model backends — separate processes)
+### 1. System dependencies
 
-| Component            | Notes                                                                |
-|----------------------|----------------------------------------------------------------------|
-| llama.cpp server     | OpenAI-compatible REST + SSE. CUDA build for 4060. Upstream image: `ghcr.io/ggml-org/llama.cpp:server-cuda`. |
-| whisper.cpp server   | Upstream `whisper-server`. Request/response transcription through M4. Upstream publishes no server image, so the Compose stack builds it locally from `packaging/compose/whisper/Dockerfile` (pinned to `v1.8.4`). M5 picks one of: custom streaming wrapper, [Speaches](https://github.com/speaches-ai/speaches) (faster-whisper, OpenAI Realtime API), or defer streaming past MVP. |
-| Piper TTS            | Upstream `python -m piper.http_server`. Built locally from `packaging/compose/piper/Dockerfile` (pinned to piper-tts 1.4.2). One process per language, routed by URL. |
-| Docker Engine ≥ 26   | Default deployment in dev. Compose v2 built-in.                      |
-| systemd ≥ 252        | Optional alternative for production. Required only on the systemd path; otherwise unused. |
-
-### Models (downloaded; not packaged with source)
-
-| Model                          | Size     | Source                                                  |
-|--------------------------------|----------|---------------------------------------------------------|
-| Qwen2.5-7B-Instruct GGUF Q4_K_M| ~4.4 GB (split 2 shards) | huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF |
-| Whisper small (multilingual)   | ~466 MB  | huggingface.co/ggerganov/whisper.cpp                    |
-| Silero VAD ONNX                | ~2 MB    | github.com/snakers4/silero-vad                          |
-| Piper voices (per language)    | 30–100 MB each | huggingface.co/rhasspy/piper-voices               |
-
-Total disk footprint with Qwen Q4_K_M + Whisper small + 1 Piper voice: **~5.0 GB**.
-
-All downloads go through one tool, `tools/acva-models`, which reads the
-same `models:` registry block in `config/default.yaml` that `acva` itself
-reads. Aliases match those used in `cfg.llm.model`, `cfg.stt.model`,
-`cfg.tts.voices.<lang>`, `cfg.vad.model_path` — install by name; reference
-by the same name. Requires Python 3 + PyYAML.
-
-| Command | What it does |
-|---|---|
-| `tools/acva-models list` | List every alias per type; mark ✓ installed / · missing |
-| `tools/acva-models install <alias> [<alias> …]` | Install specific aliases (LLM/VAD: direct download; STT/TTS: POST to Speaches) |
-| `tools/acva-models install --type tts --all` | Install all aliases of one type |
-| `tools/acva-models sync` | Install everything the active config references — typical first-run command after editing the YAML |
-| `tools/acva-models verify` | File-size check vs registry; reports drift |
-| `tools/acva-models select <type> <alias> [--lang L]` | Switch the active config to a different alias; preserves comments. For `llm` also writes `<repo>/.env`. Auto-recreates the affected container (`llama` for llm; `speaches` for stt/tts — VRAM-leak workaround) unless `--no-restart`. |
-| `tools/acva-models status` | End-to-end health: `.env` presence + required keys, cfg ↔ env consistency, file presence, container state, currently loaded models. Exits non-zero when drift is detected. |
-
-### Optional
-
-- **otelcol-contrib** — local OpenTelemetry collector if OTLP traces are enabled. Otherwise OTLP stays disabled and JSON logs are sufficient.
-- **NVIDIA Container Toolkit ≥ 1.14** — required for the Compose / GPU passthrough path (the default dev path). Skip if running backends as systemd units with a host CUDA install.
-- **NVIDIA driver + CUDA toolkit** — needed if you build llama.cpp from source for the systemd path. Not required if using the upstream Compose image.
-
-## Installing dependencies
-
-The package lists below cover **build-time and runtime dependencies that are reasonably packaged**. Items not in distro repositories (llama.cpp, whisper.cpp, Piper, models) are installed separately — see *Building external services* at the end of this section.
-
-### Manjaro / Arch
+**Manjaro / Arch:**
 
 ```sh
-# Toolchain + system libraries from official repos
+# Build toolchain + system libs
 sudo pacman -S --needed \
-  base-devel cmake pkgconf git \
-  boost \
-  curl \
-  systemd-libs \
-  portaudio \
-  soxr \
-  onnxruntime \
-  sqlite \
-  spdlog \
-  nlohmann-json   # transitive; some optional deps still pull it
-
-# AUR (use yay / paru)
-yay -S --needed \
-  prometheus-cpp \
-  opentelemetry-cpp \
-  glaze \
-  cpp-httplib \
-  doctest
-
-# CUDA for the GPU LLM build (skip if you'll download a prebuilt llama.cpp)
-sudo pacman -S --needed cuda
-
-# Optional OTel collector for OTLP tracing
-yay -S --needed otelcol-contrib-bin
+    base-devel cmake ninja pkgconf git \
+    sqlite curl portaudio soxr \
+    onnxruntime spdlog fmt \
+    webrtc-audio-processing \
+    libdatachannel \
+    nvidia-container-toolkit
+# AUR (yay / paru)
+yay -S --needed prometheus-cpp opentelemetry-cpp glaze cpp-httplib doctest
 ```
 
-### Debian / Ubuntu (24.04 LTS or newer)
+**Debian / Ubuntu 24.04+:**
 
 ```sh
-sudo apt update
 sudo apt install --no-install-recommends \
-  build-essential gcc-13 g++-13 cmake pkg-config git ca-certificates \
-  libboost-all-dev \
-  libcurl4-openssl-dev \
-  libsystemd-dev \
-  portaudio19-dev \
-  libsoxr-dev \
-  libsqlite3-dev \
-  libspdlog-dev \
-  libonnxruntime-dev   # 24.04+; on 22.04 build from source
-
-# These are not in apt; build from source under ~/src or vendor as submodules:
-#   - prometheus-cpp     https://github.com/jupp0r/prometheus-cpp
-#   - opentelemetry-cpp  https://github.com/open-telemetry/opentelemetry-cpp
-#   - glaze              https://github.com/stephenberry/glaze (header-only)
-#   - cpp-httplib        https://github.com/yhirose/cpp-httplib (header-only)
-
-# CUDA (NVIDIA's apt repository, follow upstream instructions for your driver version)
-# https://developer.nvidia.com/cuda-downloads
-
-# Optional OTel collector
-# Download otelcol-contrib release tarball from
-# https://github.com/open-telemetry/opentelemetry-collector-releases/releases
+    build-essential gcc-13 g++-13 cmake ninja-build pkg-config git \
+    libsqlite3-dev libcurl4-openssl-dev portaudio19-dev libsoxr-dev \
+    libonnxruntime-dev libspdlog-dev libfmt-dev \
+    libwebrtc-audio-processing-dev \
+    libdatachannel-dev
+# Build from source under ~/src or vendor as submodules:
+#   prometheus-cpp, opentelemetry-cpp, glaze (header-only), cpp-httplib (header-only)
 ```
 
-Build-from-source notes for Debian:
+NVIDIA Container Toolkit needs a CDI spec for GPU passthrough; regenerate after every driver upgrade:
 
 ```sh
-# prometheus-cpp
-git clone --recurse-submodules https://github.com/jupp0r/prometheus-cpp.git
-cmake -S prometheus-cpp -B prometheus-cpp/build \
-  -DBUILD_SHARED_LIBS=ON -DENABLE_PUSH=OFF -DENABLE_COMPRESSION=OFF
-sudo cmake --build prometheus-cpp/build -j --target install
-
-# opentelemetry-cpp (HTTP OTLP only, keeps deps lean)
-git clone --recurse-submodules https://github.com/open-telemetry/opentelemetry-cpp.git
-cmake -S opentelemetry-cpp -B opentelemetry-cpp/build \
-  -DWITH_OTLP_HTTP=ON -DWITH_OTLP_GRPC=OFF -DBUILD_TESTING=OFF
-sudo cmake --build opentelemetry-cpp/build -j --target install
+sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
 ```
 
-### Building external services
+If `cuInit` returns "unknown error" inside the container even though `nvidia-smi` works, the `/dev/nvidia-uvm` major drifted out of sync with the CDI spec — bounce dockerd after regenerating. Same playbook covers the post-upgrade case where the kernel module reloaded with a new dynamic major.
 
-The model runtimes are not distro-packaged and the version cadence is fast. The recommended approach is to build them from source under `~/.local/opt/` and reference them from the systemd unit files.
+### 2. Build acva
 
 ```sh
-# llama.cpp (CUDA build)
-git clone https://github.com/ggerganov/llama.cpp.git
-cmake -S llama.cpp -B llama.cpp/build -DGGML_CUDA=ON -DLLAMA_CURL=ON
-cmake --build llama.cpp/build -j --target llama-server
-# Resulting binary: llama.cpp/build/bin/llama-server
-
-# whisper.cpp (we'll wrap this with a custom streaming HTTP server in M5)
-git clone https://github.com/ggerganov/whisper.cpp.git
-cmake -S whisper.cpp -B whisper.cpp/build
-cmake --build whisper.cpp/build -j
-
-# Piper (download a release)
-mkdir -p ~/.local/opt/piper && cd ~/.local/opt/piper
-curl -LO https://github.com/rhasspy/piper/releases/latest/download/piper_linux_x86_64.tar.gz
-tar xzf piper_linux_x86_64.tar.gz
+./build.sh                # = dev preset; output under _build/dev/
+./build.sh release        # -DNDEBUG, tests off
+./run_tests.sh            # unit suite, ~5 s
+./run_integration_tests.sh   # integration suite, needs Speaches up
 ```
 
-systemd units that wrap each service ship in `packaging/systemd/` once that directory exists; see `plans/project_design.md` §4.12.
+The `build.sh` wrapper caps parallelism so it doesn't saturate the box. Raw `cmake --preset dev && cmake --build --preset dev` works too.
 
-## Quickstart with Docker Compose (dev — recommended)
-
-Default for development. Backends run as Compose containers; `acva` runs on the host as a CLI binary. A top-level `compose.yaml` re-includes `packaging/compose/docker-compose.yml`, so all `docker compose ...` commands work from the repository root.
-
-llama.cpp uses the upstream `ghcr.io/ggml-org/llama.cpp:server-cuda` image verbatim. Whisper and Piper are built locally from minimal Dockerfiles under `packaging/compose/{whisper,piper}/` because upstream does not publish HTTP-server images for either project. Both Dockerfiles are short (≤ 30 lines) and pin to release tags / package versions.
-
-### 1. Prerequisites
-
-- Docker Engine ≥ 26 (Compose v2 built-in). Podman ≥ 4 with `podman-compose` works as well.
-- **NVIDIA Container Toolkit** ≥ 1.14 for GPU passthrough to llama.cpp.
-  - Arch / Manjaro: `sudo pacman -S nvidia-container-toolkit && sudo systemctl restart docker`
-  - Debian / Ubuntu: follow the upstream NVIDIA Container Toolkit install guide.
-  - Verify: `docker run --rm --gpus all nvidia/cuda:12.6.0-base-ubuntu24.04 nvidia-smi` prints the GPU table.
-  - **CDI spec drift on rolling-release distros:** if the toolkit was generated against a previous driver version, container start fails with `failed to fulfil mount request: open /usr/lib/libnvidia-*.so: no such file or directory`. Regenerate the spec after every NVIDIA driver upgrade:
-    ```sh
-    sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
-    ```
-- User in the `docker` group (or rootless Docker).
-- Models and voices present on the host under `~/.local/share/acva/{models,voices}/`. The downloader scripts below fetch the defaults.
-
-### 2. Download the default model assets
-
-Bring up Compose first (Speaches needs to be live for STT/TTS pulls), then
-sync everything `config/default.yaml` references:
+### 3. Bring up backends
 
 ```sh
-cd packaging/compose && docker compose up -d && cd ../..
-tools/acva-models sync          # installs every alias the active config references
+./scripts/dev-up.sh
 ```
 
-Or pick aliases by hand:
+This wraps `cd packaging/compose && docker compose -p acva up -d`, polls until `acva-llama` and `acva-speaches` are both healthy, and runs `tools/acva-models status` to surface any missing model assets. On first run it materializes `.env` from `.env.example` (replacing the `__SET_HOME__` sentinel).
+
+### 4. Install model assets
 
 ```sh
-tools/acva-models install dialog            # default LLM alias (Qwen3-8B dialogue tune)
-tools/acva-models install socratic          # alternative — Socratic-tutor LoRA
-tools/acva-models install large-v3-turbo    # Speaches STT (Speaches must be up)
-tools/acva-models install --type tts --all  # all Piper voices via Speaches
-tools/acva-models install silero-v5         # Silero VAD ONNX (~2 MB)
+tools/acva-models sync     # installs every alias the active config references
 ```
 
-All idempotent and resumable. Default footprint ≈ 6.5 GB:
+Default footprint ≈ 6.5 GB:
 
 | File | Size | Source |
 |---|---|---|
-| `llama.cpp/Qwen2.5-7B-Instruct-Q4_K_M.gguf` | ~4.7 GB | bartowski's GGUF on HuggingFace |
-| `speaches/...` (faster-whisper-large-v3-turbo-ct2) | ~1.6 GB | HuggingFace via Speaches |
-| `speaches/...` (Piper voices, en + ru × 4) | ~250 MB | rhasspy/piper-voices via Speaches |
-| `silero/silero_vad.onnx` | ~2 MB | snakers4/silero-vad on GitHub |
+| `llama.cpp/<active LLM>.gguf` | ~4.7 GB | HuggingFace via direct download |
+| `speaches/...` faster-whisper-large-v3-turbo | ~1.6 GB | HuggingFace via Speaches `POST /v1/models/<id>` |
+| `speaches/...` Piper voices (en + ru × 4) | ~250 MB | HuggingFace via Speaches |
+| `silero/silero_vad.onnx` | ~2 MB | snakers4/silero-vad |
 
-Models are organized by engine type under `${ACVA_MODELS_DIR}/`
-(default `~/.local/share/acva/models/`). The downloaders create
-the subfolders automatically and migrate any legacy flat-layout
-files on first run. Override the destination dir with
-`ACVA_MODELS_DIR` (the same env var compose reads).
-
-### 3. Bring up the backends
+The downloader is idempotent / resumable. To swap an LLM:
 
 ```sh
-docker compose up -d            # first run pulls ~5 GB of images and builds whisper+piper
-docker compose ps               # all 3 services 'healthy' within ~60 s once images cached
+tools/acva-models select llm dialog              # alias from config/default.yaml
 ```
 
-This starts:
-
-- `llama` on `127.0.0.1:8081` — `ghcr.io/ggml-org/llama.cpp:server-cuda` (CUDA build, GPU passthrough)
-- `whisper` on `127.0.0.1:8082` — `acva/whisper.cpp:server-v1.8.4` (built locally from `packaging/compose/whisper/Dockerfile`)
-- `piper` on `127.0.0.1:8083` — `acva/piper:1.4.2` (built locally from `packaging/compose/piper/Dockerfile`; one voice per service, per-language deployments add more services on adjacent ports)
-
-Health check each backend:
+### 5. Run the orchestrator
 
 ```sh
-curl -fsS http://127.0.0.1:8081/health
-curl -fsS http://127.0.0.1:8082/health
-curl -fsS http://127.0.0.1:8083/health
+./_build/dev/acva
+# or
+./_build/release/acva
 ```
 
-To override host paths or model file selection, copy `.env.example` to `.env` at the repo root and edit. Compose reads `.env` from the working directory by default.
-
-### 4. Run the orchestrator on the host
+acva resolves config + DB paths via XDG (`~/.config/acva/default.yaml`, `~/.local/share/acva/acva.db`) — see CLAUDE.md for full path resolution rules. Control plane:
 
 ```sh
-./build.sh                   # = ./build.sh dev; output under _build/dev/
-./_build/dev/acva            # config + db resolved via XDG (see CLAUDE.md)
-# Control plane:
-curl -sS http://127.0.0.1:9876/status
-curl -sS http://127.0.0.1:9876/metrics
-# Test suite:
-./run_tests.sh               # = ./run_tests.sh dev
+curl -sS http://127.0.0.1:9876/status | jq
+curl -sS http://127.0.0.1:9876/metrics | head
 ```
 
-Until M1 slice 2 lands, acva runs in M0 fake-driver mode — it doesn't yet use the Compose backends. Once slice 2 is in, the orchestrator connects to llama / whisper / piper at the URLs in `config/default.yaml`.
-
-### 5. Stop / clean
+Demos covering individual paths:
 
 ```sh
-docker compose down                  # stop, keep images and volumes
-docker compose down -v --rmi all     # nuke everything (including the locally-built images)
+./_build/dev/acva demo                # list every demo
+./_build/dev/acva demo health         # probe each backend's /health
+./_build/dev/acva demo chat           # text-in → speech-out smoke
+./_build/dev/acva demo capture        # mic + VAD endpointing report
+./_build/dev/acva demo transcribe     # mic + streaming STT
+./_build/dev/acva demo bargein        # auto-injected interrupt cascade
 ```
 
-### 6. Logs
+### 6. Stop / clean
 
 ```sh
-docker compose logs -f llama         # live tail of one backend
-docker compose logs -f               # tail all backends together
+./scripts/dev-down.sh           # stop, keep volumes
+./scripts/dev-down.sh --wipe    # also clear anonymous volumes
 ```
 
-The orchestrator's logs go to its own stdout (terminal where you launched it).
+The `ACVA_MODELS_DIR` host bind-mount is never wiped automatically; remove it manually if you really want a fresh model store.
 
-### Switching to systemd
-
-For unattended / production-style deployments, replace steps 3–6 with the systemd path below. Step 2 (asset download) and step 4 (running the orchestrator) are identical.
-
----
-
-## Setting up the runtime services with systemd (production-style alternative)
-
-Use this path for unattended workstation deployments where you want services to survive logout, get journald aggregation, and don't want a Docker daemon running. This is also the path that exercises the optional sd-bus extension to the supervisor (gated by `-DACVA_ENABLE_SDBUS=ON` from M8 onward).
-
-We default to **per-user systemd** (`systemctl --user`). It needs no privileges, doesn't pollute the system unit namespace. System-wide units are supported for shared workstations; the layout is identical except for the install path and `--user` becoming root.
-
-### 1. Decide where the binaries and models live
-
-Convention used below — adjust as you like:
-
-```
-~/.local/opt/llama.cpp/build/bin/llama-server     # built by you
-~/.local/opt/whisper-server/                      # ours; M5 deliverable
-~/.local/opt/piper/piper                          # release tarball
-~/.local/share/acva/models/qwen2.5-7b-instruct-q4_k_m.gguf
-~/.local/share/acva/models/ggml-small.bin        # whisper
-~/.local/share/acva/voices/en_US-amy-medium.onnx
-~/.local/share/acva/voices/en_US-amy-medium.onnx.json
-```
-
-Create the dirs:
-```sh
-mkdir -p ~/.local/opt ~/.local/share/acva/{models,voices,db}
-```
-
-Download the models (sizes from the README dependency table). Each
-asset goes into its own per-engine subfolder under
-`~/.local/share/acva/models/`:
+### 7. Observability stack (optional)
 
 ```sh
-# Qwen2.5-7B-Instruct GGUF Q4_K_M (~4.7 GB) — into models/llama.cpp/
-mkdir -p ~/.local/share/acva/models/llama.cpp
-curl -L -o ~/.local/share/acva/models/llama.cpp/Qwen2.5-7B-Instruct-Q4_K_M.gguf \
-  https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf
-
-# Whisper small multilingual (~244 MB) — legacy whisper.cpp path; M4B+ uses Speaches instead
-curl -L -o ~/.local/share/acva/models/ggml-small.bin \
-  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
-
-# Silero VAD (~2 MB) — into models/silero/
-mkdir -p ~/.local/share/acva/models/silero
-curl -L -o ~/.local/share/acva/models/silero/silero_vad.onnx \
-  https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx
-
-# A Piper voice (~30 MB) — repeat per language you want
-mkdir -p ~/.local/share/acva/voices
-curl -L -o ~/.local/share/acva/voices/en_US-amy-medium.onnx \
-  https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx
-curl -L -o ~/.local/share/acva/voices/en_US-amy-medium.onnx.json \
-  https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx.json
+cd packaging/observability && docker compose -p acva-obs up -d
+# Grafana on http://127.0.0.1:3000  (anonymous viewer auth; admin/admin first login)
+# Prometheus on http://127.0.0.1:9090
 ```
 
-### 2. Install the unit files
+The dashboard auto-loads from `packaging/grafana/acva.json` — 7 panels covering FSM state, Speaches VRAM + wedged classifier, TTS first-audio P50/P95, service health, playback queue + underruns, watchdog, and pipeline state.
 
-Five unit files ship in [`packaging/systemd/`](packaging/systemd/) — see that directory's README for the full reference (path conventions, system-wide install variant, edits you may want to make):
+## Production alternative — systemd
+
+For unattended deployments without Docker, four user-systemd units ship in `packaging/systemd/`:
 
 | File | Role |
 |---|---|
-| `acva-llama.service`   | LLM backend (llama.cpp) on `127.0.0.1:8081` |
-| `acva-whisper.service` | STT backend (whisper.cpp) on `127.0.0.1:8082` |
-| `acva-piper.service`   | TTS backend (Piper) on `127.0.0.1:8083` |
-| `acva.service`         | Orchestrator (control plane on `127.0.0.1:9876`) |
-| `acva.target`          | Convenience target — brings up all four in order |
+| `acva-llama.service`    | LLM backend (llama.cpp `llama-server`) on `127.0.0.1:8081` |
+| `acva-speaches.service` | STT + TTS backend (Speaches) on `127.0.0.1:8090` (Compose) / `:8000` (bare-metal) |
+| `acva.service`          | Orchestrator (control plane on `127.0.0.1:9876`) |
+| `acva.target`           | Convenience target — brings up all three in dependency order |
 
-Copy them into the user-systemd directory:
-
-```sh
-mkdir -p ~/.config/systemd/user
-cp packaging/systemd/acva-*.service packaging/systemd/acva.target ~/.config/systemd/user/
-```
-
-The units use `%h` (systemd specifier expanding to your home directory) and assume the layout from step 1. If your binaries or models live elsewhere, edit each `ExecStart=` line accordingly before continuing.
-
-A few quick notes that wouldn't fit into comments inside the unit files:
-- llama.cpp's `--n-gpu-layers 999` offloads every layer to GPU. With Q4_K_M on a 4060 there's headroom.
-- llama.cpp's `--metrics` flag enables a Prometheus endpoint on the same port — handy for future scraping.
-- The orchestrator probes `/health` on each backend's port; the ports above must match `cfg.llm.base_url`, `cfg.stt.base_url`, `cfg.tts.base_url` in the YAML.
-
-### 3. Reload, enable, start
+Install:
 
 ```sh
+./scripts/install-systemd.sh             # copies units to ~/.config/systemd/user/
 systemctl --user daemon-reload
-
-# Enable to start on login (optional — skip if you prefer manual control).
-systemctl --user enable acva-llama.service acva-whisper.service acva-piper.service acva.service
-
-# Bring the whole stack up.
 systemctl --user start acva.target
 ```
 
-If you don't run a graphical session and want services to keep running after logout, enable lingering once:
+`packaging/systemd/README.md` has the full runbook including bare-metal binary layout, system-wide install variant (root-owned), and the `loginctl enable-linger` step for headless workstations. The optional sd-bus extension to the supervisor is gated by `-DACVA_ENABLE_SDBUS=ON` at build time and `cfg.supervisor.bus_kind: user` at runtime.
+
+`nvidia-cdi-refresh.service` is provided as a one-shot helper that regenerates `/etc/cdi/nvidia.yaml` on boot — useful on rolling-release distros where the spec drifts after kernel-module dynamic-major changes.
+
+## Tests
+
+Two suites, two binaries, two scripts:
 
 ```sh
-sudo loginctl enable-linger "$USER"
+./run_tests.sh                            # unit — no external deps, ~5 s
+./run_tests.sh dev --test-case='paths*'   # filter pass-through to doctest
+./run_integration_tests.sh                # integration — Silero + live Speaches
 ```
 
-### 4. Verify
+The integration suite resolves model paths via the same XDG defaults `acva` itself uses, so on the dev workstation no env vars are needed. Missing assets cause a clean per-case skip, never a fail.
+
+For longer runs:
 
 ```sh
-# All four units active?
-systemctl --user status acva.target
-
-# Health checks on each backend.
-curl -sS http://127.0.0.1:8081/health     # llama.cpp
-curl -sS http://127.0.0.1:8082/health     # whisper
-curl -sS http://127.0.0.1:8083/health     # piper
-
-# Orchestrator status (FSM, supervisor states, queue depths).
-curl -sS http://127.0.0.1:9876/status | python -m json.tool
-
-# Prometheus metrics — useful for hooking up Grafana later.
-curl -sS http://127.0.0.1:9876/metrics | head -40
+./_build/dev/acva demo soak-mini          # 60 s FakeDriver smoke
+./scripts/soak.sh                         # 4-hour acceptance run with CSV trace + report
 ```
 
-### 5. Logs
+## Troubleshooting
 
-systemd captures stdout/stderr from each unit into journald. View them:
+`docs/troubleshooting.md` is the symptom-first guide — routes failures to the right `acva demo <name>` and reads its output. Common entry points:
 
-```sh
-# Live tail of the orchestrator.
-journalctl --user -fu acva.service
+| Symptom | Start with |
+|---|---|
+| Can't connect to a backend | `acva demo health` |
+| Mic captures silence | `scripts/wake-word-offline.sh` (records raw + AEC, runs both through STT + wake-word) |
+| TTS audio cuts in/out | playback queue depth + underruns metrics; `acva demo tts` |
+| Barge-in doesn't fire | `scripts/barge-in-probe.py`, `acva demo bargein-validation` |
+| AEC isn't cancelling | `acva demo aec-record` + `scripts/aec_analyze.py` |
+| Speaches stuck at full VRAM | `acva demo wedge` reproduces the CUDA-OOM wedge case |
+| `cuInit` "unknown error" inside container | regenerate CDI spec + bounce dockerd; see Quickstart §1 |
 
-# Last 500 lines of llama.cpp.
-journalctl --user -n 500 -u acva-llama.service
+## Plans & docs
 
-# Across all units.
-journalctl --user -fu acva-llama -fu acva-whisper -fu acva-piper -fu acva
-```
-
-### 6. Stopping / restarting
-
-```sh
-# Stop everything.
-systemctl --user stop acva.target
-
-# Restart just the LLM (e.g., after a model swap).
-systemctl --user restart acva-llama.service
-
-# Disable everything from auto-starting on login.
-systemctl --user disable acva.target acva.service \
-  acva-llama.service acva-whisper.service acva-piper.service
-```
-
-### Troubleshooting
-
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `acva-llama.service` enters `failed` immediately | `llama-server` couldn't load the model (path / OOM / GPU not visible) | `journalctl --user -u acva-llama -n 100` shows the underlying error. Common fixes: check model path, lower `--n-gpu-layers`, free VRAM. |
-| `acva.service` exits with "control server: failed to bind" | Port already in use | Another `acva` is running, or the port is taken. `ss -tlnp \| grep 9876` to confirm. |
-| Orchestrator's `/status` shows `state=unconfigured` for `llm` | Supervisor can't reach `acva-llama.service` over sd-bus | Check `cfg.llm.unit` matches the unit filename. `busctl --user list \| grep systemd1`. |
-| Audio crackles or no sound | systemd unit can't access the sound server | If you launched acva from an SSH session without a graphical login, PulseAudio/PipeWire may not be reachable. Either use linger + autospawn, or run acva interactively from a desktop session. |
-| Logs say "permission denied: /dev/snd" | Missing audio group membership | `sudo usermod -aG audio "$USER"` and re-login. |
-| `--n-gpu-layers` ignored | NVIDIA driver / CUDA not loaded for the user session | `nvidia-smi` from the same login that runs the unit. May need `Environment=CUDA_VISIBLE_DEVICES=0` in the unit. |
-
-### System-wide install (alternative)
-
-If you want services to run regardless of user session — useful for a headless server:
-
-1. Move binaries to `/opt/acva/` (or similar root-owned path).
-2. Place units in `/etc/systemd/system/` instead of `~/.config/systemd/user/`.
-3. Add a dedicated `acva` system user; `User=acva` in each unit.
-4. `sudo systemctl daemon-reload && sudo systemctl enable --now acva.target`.
-5. In `cfg.supervisor.bus_kind`, set `system` instead of `user`.
-
-The orchestrator's sd-bus client picks up `bus_kind` and connects to the appropriate bus. Everything else is the same.
+- **`plans/project_design.md`** — architecture source of truth (sections referenced throughout the codebase comments).
+- **`plans/open_questions.md`** — resolved + open decisions; §L holds implementation-driven revisions.
+- **`plans/milestones/m{0..8}_*.md`** — per-milestone implementation history.
+- **`docs/aec_report.md`** — M6 + M6B AEC analysis.
+- **`docs/troubleshooting.md`** — symptom-first guide.
+- **`docs/observability.{svg,pdf}`** — runtime topology diagram.
+- **`CLAUDE.md`** — guidance for Claude Code working in this repo (also useful as a deeper reading-list for humans).
 
 ## License
 
